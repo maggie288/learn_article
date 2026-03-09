@@ -47,7 +47,7 @@ async function callMiniMax(params: {
         { role: "system", content: params.system },
         { role: "user", content: params.user },
       ],
-      max_completion_tokens: Math.min(params.maxTokens, 2048),
+      max_completion_tokens: Math.min(params.maxTokens, 8192),
       temperature: Math.max(0.01, Math.min(1, params.temperature)),
     }),
   });

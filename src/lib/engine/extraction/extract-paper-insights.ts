@@ -1,6 +1,7 @@
 import { hasAnyLlmKey, unifiedChat } from "@/lib/llm/unified-llm";
 import { serverEnv } from "@/lib/env";
 import type { ConceptEdge, ConceptNode, ExtractionResult, SourceDocument } from "@/lib/engine/types";
+import { parseJsonFromLlm } from "@/lib/utils/parse-llm-json";
 
 const SYSTEM_PROMPT = `
 你是一位资深科学教育家。请阅读论文内容，直接输出结构化结果；不要解释推理过程。只输出 JSON，不要 markdown 包裹或解释。
@@ -82,7 +83,7 @@ function safeParseJson(content: string) {
     throw new Error("Model response did not contain JSON.");
   }
 
-  return JSON.parse(jsonBlock[0]);
+  return parseJsonFromLlm(jsonBlock[0]);
 }
 
 export async function extractPaperInsights(

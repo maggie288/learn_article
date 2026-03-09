@@ -5,6 +5,7 @@ import {
   EXPLORER_NARRATOR_EXTRA,
 } from "@/lib/agents/narrator-prompts";
 import { hasAnyLlmKey, unifiedChat } from "@/lib/llm/unified-llm";
+import { parseJsonFromLlm } from "@/lib/utils/parse-llm-json";
 import type {
   DifficultyLevel,
   ExtractionResult,
@@ -65,10 +66,10 @@ function parseNarratorResponse(content: string): { text: string; citations: stri
   if (!jsonMatch) {
     throw new Error("Narrator response did not contain JSON.");
   }
-  const parsed = JSON.parse(jsonMatch[0]) as {
+  const parsed = parseJsonFromLlm<{
     text?: string;
     citations?: Array<{ claim?: string; source_section?: string; source_quote?: string }>;
-  };
+  }>(jsonMatch[0]);
   const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
   const citations: string[] = Array.isArray(parsed.citations)
     ? parsed.citations.map(
