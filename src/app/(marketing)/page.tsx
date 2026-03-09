@@ -1,102 +1,86 @@
 import Link from "next/link";
-import { listPublishedCourses } from "@/lib/db/repositories";
+import { getAuthContext } from "@/lib/auth/session";
 import { WaitlistForm } from "@/components/landing/waitlist-form";
 
-const highlights = [
-  "论文 URL -> 结构化提取 -> 学习路径 -> 异步课程生成",
-  "Phase 1 优先：项目骨架、全量 Schema、Layer 1-3、Inngest 骨架",
-  "首阶段暂缓认证，但保留完整扩展位",
-];
-
 export default async function HomePage() {
-  const sampleCourses = await listPublishedCourses(6);
+  const auth = await getAuthContext();
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-16 px-6 py-16">
-      <section className="space-y-6">
-        <span className="inline-flex rounded-full border border-sky-500/40 px-3 py-1 text-sm text-sky-200">
-          PaperFlow Phase 1
-        </span>
-        <div className="space-y-4">
-          <h1 className="max-w-4xl text-4xl font-semibold tracking-tight sm:text-6xl">
-            用统一引擎把论文转换成可学习的结构化课程。
-          </h1>
-          <p className="max-w-3xl text-lg text-slate-300">
-            当前仓库已完成 Phase 1 的应用骨架初始化，后续会把论文解析、提取、
-            路径生成和异步编排逐步接入到这里。
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <Link
-            className="rounded-full bg-sky-400 px-5 py-3 font-medium text-slate-950"
-            href="/generate"
-          >
-            进入生成页
-          </Link>
-          <Link
-            className="rounded-full border border-slate-700 px-5 py-3 font-medium text-slate-100"
-            href="/pricing"
-          >
-            查看定价
-          </Link>
-        </div>
+    <main className="mx-auto max-w-3xl px-6 pt-20 pb-24 sm:pt-28 sm:pb-32">
+      {/* Hero */}
+      <section className="text-center">
+        <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl md:text-6xl">
+          论文变课程，
+          <br />
+          <span className="text-sky-400">一键生成</span>学习路径
+        </h1>
+        <p className="mt-6 text-lg text-slate-400 sm:text-xl">
+          输入论文链接，选择难度，获得结构化课程与测验。
+          <br className="hidden sm:block" />
+          登录即可开始生成。
+        </p>
 
-        <div className="mt-10 rounded-2xl border border-slate-800 bg-slate-900/60 p-6 sm:p-8">
-          <h2 className="text-lg font-semibold text-slate-200">
-            Get early access
-          </h2>
-          <p className="mt-2 max-w-xl text-sm text-slate-400">
-            留下邮箱，上线或大版本发布时我们会通知你。
-          </p>
-          <div className="mt-4">
-            <WaitlistForm />
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-3">
-        {highlights.map((item) => (
-          <article
-            key={item}
-            className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-slate-200"
-          >
-            {item}
-          </article>
-        ))}
-      </section>
-
-      <section className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-semibold">Sample courses</h2>
-            <p className="mt-2 text-slate-300">
-              公开课程会在这里展示，首页直接消费已发布课程数据。
-            </p>
-          </div>
-          <Link className="text-sm text-sky-300" href="/explore">
-            查看全部
-          </Link>
-        </div>
-
-        {sampleCourses.length > 0 ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {sampleCourses.map((course) => (
+        <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+          {auth.isAuthenticated ? (
+            <>
               <Link
-                key={course.id}
-                className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 transition hover:border-sky-400/40"
-                href={`/paper/${course.slug}`}
+                href="/generate"
+                className="w-full rounded-full bg-sky-500 px-8 py-4 text-center font-medium text-slate-950 shadow-lg shadow-sky-500/25 transition hover:bg-sky-400 sm:w-auto"
               >
-                <div className="text-sm text-sky-300">{course.difficulty}</div>
-                <h3 className="mt-2 text-lg font-medium">{course.title}</h3>
-                <p className="mt-3 line-clamp-3 text-sm text-slate-300">{course.abstract}</p>
+                进入生成页
               </Link>
-            ))}
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-dashed border-slate-700 p-6 text-slate-400">
-            还没有已发布课程。可以先去 `Generate` 页面生成一篇论文课程。
-          </div>
-        )}
+              <Link
+                href="/explore"
+                className="w-full rounded-full border border-slate-600 px-8 py-4 text-center font-medium text-slate-200 transition hover:border-slate-500 hover:bg-slate-800/50 sm:w-auto"
+              >
+                浏览课程
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="w-full rounded-full bg-sky-500 px-8 py-4 text-center font-medium text-slate-950 shadow-lg shadow-sky-500/25 transition hover:bg-sky-400 sm:w-auto"
+              >
+                登录
+              </Link>
+              <Link
+                href="/register"
+                className="w-full rounded-full border border-slate-600 px-8 py-4 text-center font-medium text-slate-200 transition hover:border-slate-500 hover:bg-slate-800/50 sm:w-auto"
+              >
+                注册
+              </Link>
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* 一句话说明 */}
+      <section className="mt-24 border-t border-slate-800/60 pt-16">
+        <p className="text-center text-sm text-slate-500">
+          论文 URL → 结构化提取 → 学习路径 → 异步生成课程
+        </p>
+        <div className="mt-6 flex justify-center gap-6 text-sm">
+          <Link href="/pricing" className="text-slate-400 hover:text-slate-300">
+            定价
+          </Link>
+          <Link href="/explore" className="text-slate-400 hover:text-slate-300">
+            探索课程
+          </Link>
+        </div>
+      </section>
+
+      {/* Early access */}
+      <section className="mt-24 rounded-2xl border border-slate-800/60 bg-slate-900/30 p-6 sm:p-8">
+        <h2 className="text-sm font-medium uppercase tracking-wider text-slate-500">
+          抢先体验
+        </h2>
+        <p className="mt-2 text-slate-300">
+          留下邮箱，上线或大版本发布时我们会通知你。
+        </p>
+        <div className="mt-4">
+          <WaitlistForm />
+        </div>
       </section>
     </main>
   );
