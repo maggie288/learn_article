@@ -184,6 +184,59 @@ function toFavoriteRecord(row: Record<string, unknown>): FavoriteRecord {
 }
 
 export async function upsertSourceDocument(document: SourceDocument) {
+  const supabase = getSupabaseAdminClient();
+  if (supabase) {
+    // 先按 url 查是否已有 source，避免 upsert 时覆盖 id 导致违反 courses.source_id 外键
+    const { data: existing } = await supabase
+      .from("sources")
+      .select("id, type, url, slug, title, authors, abstract, raw_content, concept_graph, thinking_chain, extraction_meta, extraction_status, created_at")
+      .eq("url", document.url)
+      .maybeSingle();
+
+    if (existing) {
+      const { data: updated, error } = await supabase
+        .from("sources")
+        .update({
+          slug: document.slug,
+          title: document.metadata.title,
+          authors: document.metadata.authors,
+          abstract: document.metadata.abstract,
+          raw_content: document,
+          extraction_status: "processing",
+        })
+        .eq("id", existing.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      const persisted = toSourceRecord(updated ?? existing);
+      sourceStore.set(document.url, persisted);
+      return persisted;
+    }
+
+    const newId = randomUUID();
+    const { data, error } = await supabase
+      .from("sources")
+      .insert({
+        id: newId,
+        type: "paper",
+        url: document.url,
+        slug: document.slug,
+        title: document.metadata.title,
+        authors: document.metadata.authors,
+        abstract: document.metadata.abstract,
+        raw_content: document,
+        extraction_status: "processing",
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    const persisted = toSourceRecord(data);
+    sourceStore.set(document.url, persisted);
+    return persisted;
+  }
+
   const sourceRecord: SourceRecord = {
     id: randomUUID(),
     type: "paper",
@@ -199,37 +252,6 @@ export async function upsertSourceDocument(document: SourceDocument) {
     extractionStatus: "processing",
     createdAt: new Date().toISOString(),
   };
-
-  const supabase = getSupabaseAdminClient();
-  if (supabase) {
-    const { data, error } = await supabase
-      .from("sources")
-      .upsert(
-        {
-          id: sourceRecord.id,
-          type: sourceRecord.type,
-          url: sourceRecord.url,
-          slug: sourceRecord.slug,
-          title: sourceRecord.title,
-          authors: sourceRecord.authors,
-          abstract: sourceRecord.abstract,
-          raw_content: sourceRecord.rawContent,
-          extraction_status: sourceRecord.extractionStatus,
-        },
-        { onConflict: "url" },
-      )
-      .select()
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    const persisted = toSourceRecord(data);
-    sourceStore.set(document.url, persisted);
-    return persisted;
-  }
-
   sourceStore.set(document.url, sourceRecord);
   return sourceRecord;
 }
