@@ -95,55 +95,68 @@ export async function runCourseGeneration(payload: CourseTaskPayload) {
   });
 
   const useLLMNarrator = hasAnyLlmKey();
-  const chapters: Awaited<
-    ReturnType<
-      typeof createNarrationForChapterWithLLM
-    > extends Promise<infer T>
-      ? T
-      : ReturnType<typeof createNarrationForChapter>
-  >[] = [];
+  type ChapterResult = Awaited<
+    ReturnType<typeof createNarrationForChapterWithLLM>
+  > & {
+    analogies?: Awaited<ReturnType<typeof analogistAgent>>["selected"];
+    svgComponents?: Awaited<ReturnType<typeof visualizerAgent>>["components"];
+    quizQuestions?: Awaited<ReturnType<typeof examinerAgent>>["questions"];
+    codeSnippets?: Awaited<ReturnType<typeof coderAgent>>["snippets"];
+  };
+  const chapters: ChapterResult[] = [];
 
-  for (let index = 0; index < path.chapters.length; index++) {
-    const chapter = path.chapters[index]!;
-    const base = useLLMNarrator
-      ? await createNarrationForChapterWithLLM({
-          chapter,
-          extraction,
-          difficulty: payload.difficulty,
-          orderIndex: index,
-          totalChapters: path.chapters.length,
-          sourceDocument,
-          language: payload.language,
-        })
-      : createNarrationForChapter({
-          chapter,
-          extraction,
-          difficulty: payload.difficulty,
-          orderIndex: index,
-        });
+  /** 生产环境加速：并行生成章节，默认每批 2 章（可调大，注意 MiniMax 限流） */
+  const chapterConcurrency = Math.max(1, Math.min(4, parseInt(process.env.GENERATION_CHAPTER_CONCURRENCY ?? "2", 10) || 2));
 
-    const [analogies, visualizer, examiner, connector, coder] = await Promise.all([
-      analogistAgent(chapter, extraction, payload.difficulty),
-      visualizerAgent(chapter, extraction, payload.difficulty),
-      examinerAgent(chapter, extraction, payload.difficulty),
-      connectorAgent(chapter, extraction),
-      payload.difficulty !== "explorer"
-        ? coderAgent(chapter, extraction, payload.difficulty)
-        : Promise.resolve(null),
-    ]);
+  for (let start = 0; start < path.chapters.length; start += chapterConcurrency) {
+    const batchSize = Math.min(chapterConcurrency, path.chapters.length - start);
+    const batchResults = await Promise.all(
+      Array.from({ length: batchSize }, async (_, i) => {
+        const index = start + i;
+        const chapter = path.chapters[index]!;
+        const base = useLLMNarrator
+          ? await createNarrationForChapterWithLLM({
+              chapter,
+              extraction,
+              difficulty: payload.difficulty,
+              orderIndex: index,
+              totalChapters: path.chapters.length,
+              sourceDocument,
+              language: payload.language,
+            })
+          : createNarrationForChapter({
+              chapter,
+              extraction,
+              difficulty: payload.difficulty,
+              orderIndex: index,
+            });
 
-    chapters.push({
-      ...base,
-      analogies: analogies.selected.length > 0 ? analogies.selected : undefined,
-      svgComponents: visualizer.components.length > 0 ? visualizer.components : undefined,
-      quizQuestions: examiner.questions.length > 0 ? examiner.questions : undefined,
-      codeSnippets: coder?.snippets?.length ? coder.snippets : undefined,
-    });
+        const [analogies, visualizer, examiner, connector, coder] = await Promise.all([
+          analogistAgent(chapter, extraction, payload.difficulty),
+          visualizerAgent(chapter, extraction, payload.difficulty),
+          examinerAgent(chapter, extraction, payload.difficulty),
+          connectorAgent(chapter, extraction),
+          payload.difficulty !== "explorer"
+            ? coderAgent(chapter, extraction, payload.difficulty)
+            : Promise.resolve(null),
+        ]);
 
+        return {
+          ...base,
+          analogies: analogies.selected.length > 0 ? analogies.selected : undefined,
+          svgComponents: visualizer.components.length > 0 ? visualizer.components : undefined,
+          quizQuestions: examiner.questions.length > 0 ? examiner.questions : undefined,
+          codeSnippets: coder?.snippets?.length ? coder.snippets : undefined,
+        } satisfies ChapterResult;
+      }),
+    );
+    chapters.push(...batchResults);
     await updateGenerationTask(payload.taskId, {
-      progressChaptersDone: index + 1,
+      progressChaptersDone: Math.min(start + batchSize, path.chapters.length),
     });
   }
+
+  chapters.sort((a, b) => a.orderIndex - b.orderIndex);
 
   await updateCourseStatus(course.id, "verifying");
 

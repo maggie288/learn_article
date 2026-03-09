@@ -106,9 +106,13 @@ export async function generateChapterAudio(
   }
 }
 
+/** 并发上限，避免 TTS 接口限流 */
+const TTS_CONCURRENCY = 3;
+
 /**
  * Generate TTS for all chapters and return results. When all succeed, podcastUrl
  * can be set to the RSS URL (feed lists each chapter as item with enclosure).
+ * Chapters are processed in parallel with concurrency limit.
  */
 export async function generateCourseAudio(
   courseId: string,
@@ -123,13 +127,14 @@ export async function generateCourseAudio(
   }
 
   const results: ChapterAudioResult[] = [];
-  for (const ch of chapters) {
-    const result = await generateChapterAudio(
-      courseId,
-      ch.orderIndex,
-      ch.narration,
+  for (let start = 0; start < chapters.length; start += TTS_CONCURRENCY) {
+    const batch = chapters.slice(start, start + TTS_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map((ch) =>
+        generateChapterAudio(courseId, ch.orderIndex, ch.narration),
+      ),
     );
-    results.push(result);
+    results.push(...batchResults);
   }
-  return results;
+  return results.sort((a, b) => a.orderIndex - b.orderIndex);
 }
