@@ -13,7 +13,12 @@ export interface LlmChatResult {
 }
 
 const MINIMAX_MODEL = "M2-her";
-const MINIMAX_CHAT_URL = "https://api.minimax.io/v1/text/chatcompletion_v2";
+const MINIMAX_CHAT_PATH = "/v1/text/chatcompletion_v2";
+
+function getMinimaxChatUrl(): string {
+  const base = serverEnv.MINIMAX_API_BASE?.trim() || "https://api.minimax.io";
+  return `${base.replace(/\/$/, "")}${MINIMAX_CHAT_PATH}`;
+}
 
 export function hasAnyLlmKey(): boolean {
   return Boolean(serverEnv.MINIMAX_API_KEY?.trim());
@@ -28,7 +33,7 @@ async function callMiniMax(params: {
 }): Promise<LlmChatResult> {
   const key = serverEnv.MINIMAX_API_KEY;
   if (!key?.trim()) throw new Error("MINIMAX_API_KEY not set");
-  const res = await fetch(MINIMAX_CHAT_URL, {
+  const res = await fetch(getMinimaxChatUrl(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
