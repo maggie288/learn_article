@@ -22,9 +22,17 @@ export const generateCourseFunction = inngest.createFunction(
       }
       return await runCourseGeneration(payload);
     } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : error != null && typeof (error as { message?: string }).message === "string"
+              ? (error as { message: string }).message
+              : String(error);
       await updateGenerationTask(payload.taskId, {
         status: "failed",
-        errorMessage: error instanceof Error ? error.message : "Unknown workflow error",
+        errorMessage: message || "Unknown workflow error",
       });
 
       throw error;

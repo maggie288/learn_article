@@ -18,9 +18,17 @@ export async function dispatchCourseGeneration(payload: CourseTaskPayload) {
 
   const run = payload.skeleton ? runCourseGenerationSkeleton : runCourseGeneration;
   void run(payload).catch(async (error) => {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : error != null && typeof (error as { message?: string }).message === "string"
+            ? (error as { message: string }).message
+            : String(error);
     await updateGenerationTask(payload.taskId, {
       status: "failed",
-      errorMessage: error instanceof Error ? error.message : "Local workflow error",
+      errorMessage: message || "Local workflow error",
     });
   });
 }
