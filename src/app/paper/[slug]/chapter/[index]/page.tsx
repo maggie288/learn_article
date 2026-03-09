@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { canAccessChapter, getAuthContext } from "@/lib/auth/session";
+import { sanitizeNarration } from "@/lib/utils/narration";
 import { ChapterViewedTracker } from "@/components/analytics/chapter-viewed-tracker";
 import { ChapterProgressButton } from "@/components/course/chapter-progress-button";
 import { ChapterQuizSubmit } from "@/components/course/chapter-quiz-submit";
@@ -30,6 +31,7 @@ export default async function ChapterPage({ params }: ChapterPageProps) {
   }
 
   const unlocked = canAccessChapter(chapterIndex, authContext.isAuthenticated);
+  const safeNarration = sanitizeNarration(chapter.narration);
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-6 py-16">
@@ -40,21 +42,34 @@ export default async function ChapterPage({ params }: ChapterPageProps) {
           difficulty={course.difficulty}
         />
       ) : null}
-      <div className="space-y-4">
-        <Link className="text-sm text-sky-300" href={`/paper/${slug}`}>
-          Back to course
+      <div className="space-y-3">
+        <Link
+          className="inline-flex items-center text-sm text-sky-400 hover:text-sky-300"
+          href={`/paper/${slug}`}
+        >
+          ← Back to course
         </Link>
-        <h1 className="text-3xl font-semibold">
+        <h1 className="text-3xl font-semibold tracking-tight text-white">
           Chapter {chapter.orderIndex + 1}: {chapter.title}
         </h1>
-        {chapter.subtitle ? <p className="text-slate-400">{chapter.subtitle}</p> : null}
+        {chapter.subtitle ? (
+          <p className="text-slate-400">{chapter.subtitle}</p>
+        ) : null}
       </div>
 
       {unlocked ? (
         <>
           <article className="mt-8 rounded-3xl border border-slate-800 bg-slate-900/60 p-8">
-            <div className="prose prose-invert max-w-none">
-              <p>{chapter.narration}</p>
+            <div className="prose prose-invert prose-p:leading-relaxed prose-p:text-slate-200 max-w-none">
+              {safeNarration
+                .split(/\n\n+/)
+                .filter(Boolean)
+                .map((paragraph, i) => (
+                  <p key={i}>{paragraph}</p>
+                ))}
+              {!safeNarration && (
+                <p className="text-slate-500">No content for this chapter yet.</p>
+              )}
             </div>
           </article>
 

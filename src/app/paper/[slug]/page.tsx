@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getAuthContext } from "@/lib/auth/session";
+import { sanitizeNarration } from "@/lib/utils/narration";
 import { FavoriteToggleButton } from "@/components/course/favorite-toggle-button";
 import { ShareBar } from "@/components/share/share-bar";
 import { getCourseBySlug, isFavoriteCourse } from "@/lib/db/repositories";
@@ -58,10 +59,9 @@ export default async function PaperPage({ params }: PaperPageProps) {
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-6 py-16">
       <div className="space-y-6">
-        <span className="text-sm uppercase tracking-[0.2em] text-sky-300">
-          SSR Course Page
-        </span>
-        <h1 className="text-4xl font-semibold">{course.sourceTitle || slug}</h1>
+        <h1 className="text-4xl font-semibold tracking-tight">
+          {course.sourceTitle || slug}
+        </h1>
         <p className="text-slate-300">{course.sourceAbstract || "Abstract pending."}</p>
         <div className="flex flex-wrap gap-3 text-sm text-slate-400">
           <span>Difficulty: {course.difficulty}</span>
@@ -99,7 +99,9 @@ export default async function PaperPage({ params }: PaperPageProps) {
                 ) : null}
               </div>
               <div className="mt-2 text-xl font-medium">{chapter.title}</div>
-              <p className="mt-3 line-clamp-3 text-sm text-slate-300">{chapter.narration}</p>
+              <p className="mt-3 line-clamp-3 text-sm text-slate-300">
+                {sanitizeNarration(chapter.narration) || "—"}
+              </p>
             </Link>
           ))}
         </div>

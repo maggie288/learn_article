@@ -113,6 +113,16 @@ function extractTitle(rawText: string) {
   return lines[0] ?? "Untitled Paper";
 }
 
+/** Strip script/style tags and their content so ar5iv HTML yields only readable text. */
+function stripNonTextElements(html: string): string {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function fetchTextFallback(url: string) {
   const response = await fetch(url, {
     headers: {
@@ -125,7 +135,7 @@ async function fetchTextFallback(url: string) {
   }
 
   const html = await response.text();
-  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return stripNonTextElements(html);
 }
 
 export async function ingestPaperFromUrl(sourceUrl: string): Promise<SourceDocument> {
