@@ -22,7 +22,7 @@ import { extractPaperInsights } from "@/lib/engine/extraction/extract-paper-insi
 import { ingestFromUrl } from "@/lib/engine/ingestion/paper";
 import { generateLearningPath } from "@/lib/engine/path-generation/generate-learning-path";
 import { renderBlogFromChapters } from "@/lib/engine/rendering/blog";
-import type { CourseTaskPayload } from "@/lib/engine/types";
+import type { CodeSnippet, CourseTaskPayload } from "@/lib/engine/types";
 import { autoFixFailedChapters } from "@/lib/engine/verification/auto-fix";
 import { generateCourseAudio } from "@/lib/tts/elevenlabs";
 import { runVerificationPipeline } from "@/lib/engine/verification/run-verification";
@@ -101,7 +101,7 @@ export async function runCourseGeneration(payload: CourseTaskPayload) {
     analogies?: Awaited<ReturnType<typeof analogistAgent>>["selected"];
     svgComponents?: Awaited<ReturnType<typeof visualizerAgent>>["components"];
     quizQuestions?: Awaited<ReturnType<typeof examinerAgent>>["questions"];
-    codeSnippets?: Awaited<ReturnType<typeof coderAgent>>["snippets"];
+    codeSnippets?: CodeSnippet[];
   };
   const chapters: ChapterResult[] = [];
 
