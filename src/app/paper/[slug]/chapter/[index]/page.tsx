@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { canAccessChapter, getAuthContext } from "@/lib/auth/session";
-import { sanitizeNarration } from "@/lib/utils/narration";
+import { splitNarrationIntoParagraphs } from "@/lib/utils/narration";
 import { ChapterViewedTracker } from "@/components/analytics/chapter-viewed-tracker";
 import { ChapterProgressButton } from "@/components/course/chapter-progress-button";
 import { ChapterQuizSubmit } from "@/components/course/chapter-quiz-submit";
@@ -31,7 +31,7 @@ export default async function ChapterPage({ params }: ChapterPageProps) {
   }
 
   const unlocked = canAccessChapter(chapterIndex, authContext.isAuthenticated);
-  const safeNarration = sanitizeNarration(chapter.narration);
+  const paragraphs = splitNarrationIntoParagraphs(chapter.narration);
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-6 py-16">
@@ -60,14 +60,12 @@ export default async function ChapterPage({ params }: ChapterPageProps) {
       {unlocked ? (
         <>
           <article className="mt-8 rounded-3xl border border-slate-800 bg-slate-900/60 p-8">
-            <div className="prose prose-invert prose-p:leading-relaxed prose-p:text-slate-200 max-w-none">
-              {safeNarration
-                .split(/\n\n+/)
-                .filter(Boolean)
-                .map((paragraph, i) => (
+            <div className="prose prose-invert prose-p:leading-relaxed prose-p:text-slate-200 prose-p:mb-5 max-w-none">
+              {paragraphs.length > 0 ? (
+                paragraphs.map((paragraph, i) => (
                   <p key={i}>{paragraph}</p>
-                ))}
-              {!safeNarration && (
+                ))
+              ) : (
                 <p className="text-slate-500">No content for this chapter yet.</p>
               )}
             </div>
