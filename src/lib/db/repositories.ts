@@ -1261,6 +1261,28 @@ export async function markSubscriptionStatus(
   return null;
 }
 
+export async function createUsdtPaymentRequest(params: {
+  userId: string;
+  plan: string;
+  amountUsdt?: string | null;
+  txHash?: string | null;
+}) {
+  const supabase = getSupabaseAdminClient();
+  const id = randomUUID();
+  if (supabase) {
+    const { error } = await supabase.from("usdt_payment_requests").insert({
+      id,
+      user_id: params.userId,
+      plan: params.plan,
+      amount_usdt: params.amountUsdt ?? null,
+      tx_hash: params.txHash ?? null,
+      status: "pending",
+    });
+    if (error) throw error;
+  }
+  return { id };
+}
+
 export async function getOrCreateUsageQuota(userId: string, period: string) {
   const cacheKey = `${userId}:${period}`;
   const cached = usageQuotaStore.get(cacheKey);

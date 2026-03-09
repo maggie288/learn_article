@@ -23,6 +23,10 @@ const envSchema = z.object({
   STRIPE_PRO_YEARLY_PRICE_ID: z.string().optional(),
   STRIPE_TEAM_PRICE_ID: z.string().optional(),
   USDT_TRC20_WALLET_ADDRESS: z.string().optional(),
+  PROMO_ALL_PLANS_FREE: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
   UPSTASH_REDIS_REST_URL: optionalUrl,
   UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
   NEXT_PUBLIC_POSTHOG_KEY: z.string().optional(),
@@ -51,6 +55,7 @@ export const serverEnv = envSchema.parse({
   STRIPE_PRO_YEARLY_PRICE_ID: process.env.STRIPE_PRO_YEARLY_PRICE_ID,
   STRIPE_TEAM_PRICE_ID: process.env.STRIPE_TEAM_PRICE_ID,
   USDT_TRC20_WALLET_ADDRESS: process.env.USDT_TRC20_WALLET_ADDRESS,
+  PROMO_ALL_PLANS_FREE: process.env.PROMO_ALL_PLANS_FREE,
   UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
   UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
   NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
@@ -107,6 +112,10 @@ export function isStripeConfigured() {
 
 export function getUsdtWalletAddress() {
   return serverEnv.USDT_TRC20_WALLET_ADDRESS?.trim() || null;
+}
+
+export function isPromoAllPlansFree() {
+  return Boolean(serverEnv.PROMO_ALL_PLANS_FREE);
 }
 
 export function isPostHogConfigured() {

@@ -46,7 +46,7 @@ export function UsdtSubscribeSection({ address }: UsdtSubscribeSectionProps) {
         </button>
       </div>
       <p className="mt-3 text-xs text-slate-500">
-        网络：TRC20 (TRON) · 币种：USDT · 金额：Pro 月付/年付或 Team 请参考定价或联系客服
+        网络：TRC20 (TRON) · 币种：USDT · 金额：Pro 月付 15 / 年付 150，Team 30 USDT/月
       </p>
     </div>
   );

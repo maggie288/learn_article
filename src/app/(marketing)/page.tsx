@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { getAuthContext } from "@/lib/auth/session";
-import { WaitlistForm } from "@/components/landing/waitlist-form";
 
 export default async function HomePage() {
   const auth = await getAuthContext();
@@ -67,19 +66,6 @@ export default async function HomePage() {
           <Link href="/explore" className="text-slate-400 hover:text-slate-300">
             探索课程
           </Link>
-        </div>
-      </section>
-
-      {/* Early access */}
-      <section className="mt-24 rounded-2xl border border-slate-800/60 bg-slate-900/30 p-6 sm:p-8">
-        <h2 className="text-sm font-medium uppercase tracking-wider text-slate-500">
-          抢先体验
-        </h2>
-        <p className="mt-2 text-slate-300">
-          留下邮箱，上线或大版本发布时我们会通知你。
-        </p>
-        <div className="mt-4">
-          <WaitlistForm />
         </div>
       </section>
     </main>

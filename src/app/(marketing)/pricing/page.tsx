@@ -1,39 +1,26 @@
-import { UsdtSubscribeSection } from "@/components/pricing/usdt-subscribe-section";
+import { PLANS } from "@/components/pricing/plan-cards";
+import { ChoosePlanAndPay } from "@/components/pricing/choose-plan-and-pay";
 import { getAuthContext } from "@/lib/auth/session";
-import { getUsdtWalletAddress } from "@/lib/env";
-
-const plans = [
-  {
-    name: "Free",
-    description: "每月 3 篇 Explorer 课程。",
-    paid: false,
-  },
-  {
-    name: "Pro",
-    description: "完整难度层级、下载与优先队列。",
-    paid: true,
-  },
-  {
-    name: "Team",
-    description: "团队知识库、协作与管理能力。",
-    paid: true,
-  },
-];
+import { getUsdtWalletAddress, isPromoAllPlansFree } from "@/lib/env";
 
 export default async function PricingPage() {
   const authContext = await getAuthContext();
+  const isPromo = isPromoAllPlansFree();
+  const usdtAddress = getUsdtWalletAddress();
 
   return (
     <main className="mx-auto min-h-screen max-w-5xl px-6 py-16">
       <div className="space-y-4">
-        <h1 className="text-4xl font-semibold">Pricing</h1>
+        <h1 className="text-4xl font-semibold">定价</h1>
         <p className="max-w-2xl text-slate-300">
-          订阅使用 USDT (TRC20) 支付，下方为收款地址与说明。
+          {isPromo
+            ? "当前促销期，所有套餐限时免费。选择套餐后点击免费开通即可。"
+            : "选择套餐后使用 USDT (TRC20) 支付，到账后我们会开通订阅。"}
         </p>
       </div>
 
       <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-        <div className="text-sm text-slate-400">Current plan</div>
+        <div className="text-sm text-slate-400">当前套餐</div>
         <div className="mt-2 text-2xl font-semibold">{authContext.plan}</div>
         <div className="mt-2 text-sm text-slate-300">
           Free 用户本月已生成 {authContext.monthlyCourseCount} / 3 篇课程。
@@ -41,24 +28,49 @@ export default async function PricingPage() {
       </div>
 
       <div className="mt-10 grid gap-4 md:grid-cols-3">
-        {plans.map((plan) => (
+        {PLANS.map((plan) => (
           <section
-            key={plan.name}
+            key={plan.id}
             className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6"
           >
             <h2 className="text-xl font-medium">{plan.name}</h2>
+            <div className="mt-2 flex flex-wrap items-baseline gap-2">
+              {isPromo && plan.paid ? (
+                <>
+                  <span className="text-2xl font-semibold text-emerald-400">限时免费</span>
+                  <span className="text-sm text-slate-500 line-through">{plan.originalPrice}</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-2xl font-semibold text-white">{plan.price}</span>
+                  <span className="text-sm text-slate-400">{plan.period}</span>
+                </>
+              )}
+            </div>
             <p className="mt-3 text-sm text-slate-300">{plan.description}</p>
-            {plan.paid ? (
-              <p className="mt-4 text-sm text-slate-400">
-                使用 USDT 支付，见下方收款说明。
-              </p>
-            ) : null}
+            {plan.paid && plan.options && (
+              <ul className="mt-3 space-y-1 text-sm text-slate-400">
+                {plan.options.map((opt) => (
+                  <li key={opt.id}>{opt.label}</li>
+                ))}
+              </ul>
+            )}
           </section>
         ))}
       </div>
 
-      <section id="usdt" className="mt-10">
-        <UsdtSubscribeSection address={getUsdtWalletAddress()} />
+      <section id="usdt" className="mt-10 rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+        {authContext.isAuthenticated ? (
+          <ChoosePlanAndPay isPromo={isPromo} usdtAddress={usdtAddress} />
+        ) : (
+          <p className="text-slate-400">
+            请先{" "}
+            <a href="/login" className="text-sky-400 hover:underline">
+              登录
+            </a>{" "}
+            后选择套餐并{isPromo ? "免费开通" : "使用 USDT 支付"}。
+          </p>
+        )}
       </section>
     </main>
   );
