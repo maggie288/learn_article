@@ -1,6 +1,6 @@
 "use client";
 
-import { ClerkProvider } from "@clerk/nextjs";
+import { SessionProvider } from "next-auth/react";
 import { AppPostHogProvider } from "@/components/providers/posthog-provider";
 
 export function RootProviders({
@@ -8,13 +8,9 @@ export function RootProviders({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
-    return <AppPostHogProvider>{children}</AppPostHogProvider>;
-  }
-
   return (
-    <ClerkProvider>
+    <SessionProvider>
       <AppPostHogProvider>{children}</AppPostHogProvider>
-    </ClerkProvider>
+    </SessionProvider>
   );
 }

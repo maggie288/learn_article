@@ -1,54 +1,36 @@
-import { SubscribeButton } from "@/components/pricing/subscribe-button";
+import { UsdtSubscribeSection } from "@/components/pricing/usdt-subscribe-section";
 import { getAuthContext } from "@/lib/auth/session";
+import { getUsdtWalletAddress } from "@/lib/env";
 
 const plans = [
   {
     name: "Free",
     description: "每月 3 篇 Explorer 课程。",
-    cta: null,
+    paid: false,
   },
   {
     name: "Pro",
     description: "完整难度层级、下载与优先队列。",
-    cta: {
-      plan: "pro-monthly" as const,
-      label: "Start Pro",
-    },
+    paid: true,
   },
   {
     name: "Team",
     description: "团队知识库、协作与管理能力。",
-    cta: {
-      plan: "team" as const,
-      label: "Start Team",
-    },
+    paid: true,
   },
 ];
 
-interface PricingPageProps {
-  searchParams: Promise<{
-    checkout?: string;
-  }>;
-}
-
-export default async function PricingPage({ searchParams }: PricingPageProps) {
+export default async function PricingPage() {
   const authContext = await getAuthContext();
-  const params = await searchParams;
 
   return (
     <main className="mx-auto min-h-screen max-w-5xl px-6 py-16">
       <div className="space-y-4">
         <h1 className="text-4xl font-semibold">Pricing</h1>
         <p className="max-w-2xl text-slate-300">
-          商业化主链已接入 Stripe checkout/portal/webhook，当前页面用于发起订阅。
+          订阅使用 USDT (TRC20) 支付，下方为收款地址与说明。
         </p>
       </div>
-
-      {params.checkout === "cancelled" ? (
-        <div className="mt-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
-          Checkout was cancelled. You can restart the subscription flow any time.
-        </div>
-      ) : null}
 
       <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
         <div className="text-sm text-slate-400">Current plan</div>
@@ -66,12 +48,18 @@ export default async function PricingPage({ searchParams }: PricingPageProps) {
           >
             <h2 className="text-xl font-medium">{plan.name}</h2>
             <p className="mt-3 text-sm text-slate-300">{plan.description}</p>
-            {plan.cta ? (
-              <SubscribeButton label={plan.cta.label} plan={plan.cta.plan} />
+            {plan.paid ? (
+              <p className="mt-4 text-sm text-slate-400">
+                使用 USDT 支付，见下方收款说明。
+              </p>
             ) : null}
           </section>
         ))}
       </div>
+
+      <section id="usdt" className="mt-10">
+        <UsdtSubscribeSection address={getUsdtWalletAddress()} />
+      </section>
     </main>
   );
 }

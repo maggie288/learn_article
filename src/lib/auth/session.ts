@@ -1,18 +1,12 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
-import { cookies } from "next/headers";
+import { getServerSession } from "next-auth";
 import {
-  getAppUserByClerkId,
+  getAppUserById,
   getOrCreateUsageQuota,
   getUserSubscription,
   incrementUsageQuota,
-  upsertAppUser,
 } from "@/lib/db/repositories";
-import { isClerkConfigured } from "@/lib/env";
 import type { DifficultyLevel } from "@/lib/engine/types";
-
-const REFERRAL_COOKIE = "referral_ref";
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { nextAuthOptions } from "@/lib/auth/next-auth-options";
 
 export interface AuthContext {
   authConfigured: boolean;
@@ -27,7 +21,11 @@ export function getCurrentQuotaPeriod(date = new Date()) {
 }
 
 export async function getAuthContext(): Promise<AuthContext> {
-  if (!isClerkConfigured()) {
+  const hasAuth =
+    typeof process.env.NEXTAUTH_SECRET === "string" &&
+    process.env.NEXTAUTH_SECRET.length > 0;
+
+  if (!hasAuth) {
     return {
       authConfigured: false,
       isAuthenticated: false,
@@ -37,8 +35,10 @@ export async function getAuthContext(): Promise<AuthContext> {
     };
   }
 
-  const session = await auth();
-  if (!session.userId) {
+  const session = await getServerSession(nextAuthOptions);
+  const appUserId = session?.user?.id ?? null;
+
+  if (!appUserId) {
     return {
       authConfigured: true,
       isAuthenticated: false,
@@ -48,30 +48,7 @@ export async function getAuthContext(): Promise<AuthContext> {
     };
   }
 
-  const existingUser = await getAppUserByClerkId(session.userId);
-  const clerkUser = existingUser ? null : await currentUser();
-
-  let referrerId: string | null = null;
-  if (!existingUser && clerkUser) {
-    const cookieStore = await cookies();
-    const ref = cookieStore.get(REFERRAL_COOKIE)?.value;
-    if (ref && UUID_REGEX.test(ref)) {
-      referrerId = ref;
-    }
-  }
-
-  const appUser =
-    existingUser ??
-    (clerkUser
-      ? await upsertAppUser({
-          clerkUserId: session.userId,
-          email: clerkUser.emailAddresses[0]?.emailAddress ?? `${session.userId}@paperflow.local`,
-          name: [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null,
-          avatarUrl: clerkUser.imageUrl,
-          referrerId,
-        })
-      : null);
-
+  const appUser = await getAppUserById(appUserId);
   if (!appUser) {
     return {
       authConfigured: true,
@@ -98,11 +75,13 @@ export async function consumeGenerationQuota(userId: string) {
   return incrementUsageQuota(userId, getCurrentQuotaPeriod());
 }
 
-export function canGenerateWithPlan(plan: "free" | "pro" | "team", difficulty: DifficultyLevel) {
+export function canGenerateWithPlan(
+  plan: "free" | "pro" | "team",
+  difficulty: DifficultyLevel,
+) {
   if (plan === "free") {
     return difficulty === "explorer";
   }
-
   return true;
 }
 
@@ -110,7 +89,6 @@ export function isQuotaExceeded(plan: "free" | "pro" | "team", monthlyCourseCoun
   if (plan !== "free") {
     return false;
   }
-
   return monthlyCourseCount >= 3;
 }
 

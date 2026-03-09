@@ -1,46 +1,18 @@
-"use client";
-
-import { useState } from "react";
+import Link from "next/link";
 
 export function ManageSubscriptionButton() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleClick() {
-    setLoading(true);
-    setError(null);
-
-    const response = await fetch("/api/stripe/create-portal", {
-      method: "POST",
-    });
-
-    const result = (await response.json()) as {
-      success: boolean;
-      data?: { url: string | null };
-      error?: { message: string };
-    };
-
-    setLoading(false);
-
-    if (!response.ok || !result.success || !result.data?.url) {
-      setError(result.error?.message ?? "Unable to open billing portal.");
-      return;
-    }
-
-    window.location.href = result.data.url;
-  }
-
   return (
-    <div className="space-y-2">
-      <button
-        className="rounded-full border border-slate-700 px-4 py-2 text-sm text-slate-100 disabled:opacity-60"
-        disabled={loading}
-        onClick={handleClick}
-        type="button"
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+      <h2 className="text-lg font-semibold text-slate-200">订阅管理</h2>
+      <p className="mt-2 text-sm text-slate-400">
+        Pro / Team 订阅请使用 USDT (TRC20) 支付，收款地址与说明见定价页。到账后我们会人工开通或根据您提供的交易哈希核对。
+      </p>
+      <Link
+        href="/pricing#usdt"
+        className="mt-4 inline-block rounded-full border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800"
       >
-        {loading ? "Opening..." : "Manage subscription"}
-      </button>
-      {error ? <div className="text-sm text-rose-300">{error}</div> : null}
+        前往定价页（USDT 收款）
+      </Link>
     </div>
   );
 }

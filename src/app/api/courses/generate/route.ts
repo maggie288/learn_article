@@ -37,7 +37,7 @@ export async function POST(request: Request) {
 
   if (!authContext.authConfigured) {
     return NextResponse.json(
-      err("AUTH_NOT_CONFIGURED", "Clerk must be configured before protected generation is enabled."),
+      err("AUTH_NOT_CONFIGURED", "Auth must be configured (NEXTAUTH_SECRET) before protected generation is enabled."),
       { status: 503 },
     );
   }

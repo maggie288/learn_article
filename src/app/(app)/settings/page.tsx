@@ -47,7 +47,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
 
       {params.checkout === "success" ? (
         <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-100">
-          Checkout completed. Subscription status will reflect here after Stripe webhook sync.
+          支付已收到，我们会尽快核对并开通订阅。
         </div>
       ) : null}
 

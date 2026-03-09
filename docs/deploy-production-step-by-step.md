@@ -16,6 +16,19 @@
 
 ---
 
+## 后端是什么？Supabase 要自己部署吗？
+
+- **本项目的「后端」**：就是 Next.js 里的 **API 路由**（`src/app/api/*`，例如 `/api/health`、`/api/courses/generate`、`/api/stripe/webhook` 等）。它们和前端页面**一起**跑在 **Vercel** 上，没有单独一台“后端服务器”。所以：**部署后端 = 在 Vercel 部署本项目**（第 2 步导入仓库并 Deploy）。部署完成后，前端和 API 都在同一个生产域名下（例如 `https://xxx.vercel.app`）。
+- **Supabase 不是你要部署的东西**：Supabase 是**托管服务**（数据库在 Supabase 云端）。你只需要：
+  1. 在 [Supabase 官网](https://supabase.com) **新建一个项目**（第 4 步），
+  2. 在 Supabase 的 **SQL Editor** 里**执行本仓库的迁移 SQL**（建表），
+  3. 在 Supabase 的 **Settings → API** 里**复制 Project URL 和密钥**，填到 Vercel 的环境变量里。  
+  之后，Vercel 上跑着的 Next.js（你的“后端”）会用这些密钥去**连接** Supabase 的数据库，读写数据。你不需要自己装数据库、也不需要在某台机器上“部署 Supabase”。
+
+总结：**你只需要部署一次 Vercel**（第 2 步 + 环境变量）；Supabase / Clerk / Stripe 等都是在它们自己的云端，你只做「注册 → 拿密钥 → 填到 Vercel」即可。
+
+---
+
 ## 第 0 步：本地预检（约 5 分钟）
 
 - [ ] 代码已提交到 Git，无未提交的敏感信息（`.env`、`.env.local` 已在 `.gitignore`，不要提交）
@@ -183,12 +196,46 @@
 
 ---
 
-## 第 6 步：Clerk 生产
+## 第 6 步：Clerk 生产（详细）
 
-- **在哪里操作**：登录 [Clerk Dashboard](https://dashboard.clerk.com) → 选中你的应用（或先 **Create application** 新建）→ 左侧 **Configure** → **Domains** / **Paths**
-- [ ] 在 **Domains** 中添加生产域名（如 `your-app.vercel.app` 或自定义域名）
-- [ ] **Settings → URLs**：Sign-in URL、Sign-up URL、After sign-in / sign-up 等可保持默认或指向生产路径（如 `https://你的域名/dashboard`）
-- [ ] 确认生产环境用的是 **Production** 下的 API Keys（第 3 步里填的应是 Production 的 Key）
+- **在哪里操作**：登录 [Clerk Dashboard](https://dashboard.clerk.com) → 选中你的应用 → 左侧 **Configure** → 先 **Domains**，再 **Paths**。
+
+### 6.1 Domains
+
+- [ ] 在 **Domains** 里点 **Add domain**，填你的生产域名（如 `your-app.vercel.app` 或自定义域名 `www.xxx.com`），保存。
+
+### 6.2 Paths 怎么填（本仓库用弹窗登录，无单独登录页）
+
+本项目的登录是 **Header 里的「Sign in」按钮 → Clerk 弹窗**，没有单独的 `/sign-in`、`/sign-up` 页面，所以 Paths 可以尽量从简。
+
+| 区块 | 字段 | 建议填法 |
+|------|------|----------|
+| **Development host** | Fallback development host | 本地开发用，填 `http://localhost:3000` 即可。 |
+| **Application paths** | Home URL | 留空（表示首页在根路径 `/`）；或填 `/`。 |
+| | Unauthorized sign in URL | 留空；或填 `/`（设备未授权时跳回首页）。 |
+| **Component paths**（Sign-in / Sign-up / Signing out） | Sign-in page on development host | 留空即可（当前用弹窗，不用独立登录页）。若以后做了 `/sign-in` 页面，再改成 `/sign-in`。 |
+| | Sign-up page on development host | 同上，留空或以后填 `/sign-up`。 |
+| | Signing out → Page on development host | 填 **`/`**（登出后回到首页）。 |
+
+说明：
+
+- **Sign-in page on Account Portal**、**Sign-up page on Account Portal** 是 Clerk 自带的托管页，不用改。
+- 若 Clerk 提示 “Setting component paths via the Dashboard will be deprecated”，之后可以按文档在代码里用 `signInUrl` / `signUpUrl` / `afterSignOutUrl` 配置，当前在 Dashboard 这样填即可。
+- 生产环境访问时，Clerk 会认你在 **Domains** 里加的生产域名；Paths 里的 “development host” 主要影响本地和「从外部发起的」功能（如模拟登录），本地用 `http://localhost:3000` 即可。
+
+### 6.3 登录后跳转（可选）
+
+若希望用户登录后直接进仪表盘：在 **Paths** 或 **Sessions** 相关设置里找 “After sign-in URL” / “Redirect URL”，填 `https://你的域名/dashboard`（或留空用代码里的默认行为）。本仓库若未在代码里写死，Clerk 默认可能跳到 `/`，你可在需要时再改。
+
+### 6.4 确认 API Keys（解决 “Missing publishableKey” 必做）
+
+- [ ] 在 Clerk 左侧 **API Keys**，确认右上角环境选 **Production**，复制：
+  - **Publishable key**（形如 `pk_live_xxxx`）→ 对应 Vercel 变量名：**`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`**
+  - **Secret key**（形如 `sk_live_xxxx`）→ 对应 Vercel 变量名：**`CLERK_SECRET_KEY`**
+- [ ] 在 **Vercel** → 你的项目 → **Settings** → **Environment Variables** 中新增/核对：
+  - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` = 上面复制的 Publishable key（**Production** 必勾）
+  - `CLERK_SECRET_KEY` = 上面复制的 Secret key（**Production** 必勾）
+- [ ] 保存后到 **Deployments** → 最新部署右侧 **⋯** → **Redeploy**（改完 `NEXT_PUBLIC_*` 必须重新部署才会生效）。
 
 ---
 
@@ -236,6 +283,19 @@
 - [ ] Inngest 控制台里能看到生产环境的 run（若你刚触发过生成）
 - [ ] PostHog（若已配）能看到生产环境事件
 - [ ] Sentry（若已配）无异常飙升
+
+---
+
+## Vercel 部署失败：是代码还是配置？
+
+- **先本地跑一遍构建**：在项目根目录执行 `npm run build`。若**本地 build 通过**，则当前代码没问题，Vercel 失败多半是**配置或环境**（见下）。若**本地 build 就报错**，则是代码问题，按报错修代码后再推送。
+- **Vercel 上怎么看报错**：Vercel 项目 → **Deployments** → 点进失败的那次部署 → 看 **Building** 或 **Logs** 里**红色报错**（例如 `Error: ...`、`ZodError`、`Failed to collect page data`）。把最后几行错误贴给协作者或按提示排查。
+- **常见配置原因**：
+  1. **环境变量**：Vercel 的 **Settings → Environment Variables** 里，Production 是否把必填项都填了？若某变量在 Vercel 里是「空」或未填，构建阶段可能报错（本项目已对可选 URL 做兼容，未填的 URL 变量不会导致 build 失败）。
+  2. **Node 版本**：Vercel 默认 Node 18+，一般无需改。若报错和 Node 有关，可在 **Settings → General → Node.js Version** 选 20。
+  3. **构建命令**：保持默认 `npm run build`（即 `next build`），不要改成 `npm run dev` 等。
+
+结论：**本地 `npm run build` 成功 + Vercel 失败 → 优先按上面看 Vercel 日志，并检查环境变量与 Node 版本。**
 
 ---
 

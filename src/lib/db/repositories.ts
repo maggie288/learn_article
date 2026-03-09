@@ -964,6 +964,83 @@ export async function getAppUserByClerkId(clerkUserId: string) {
   return user;
 }
 
+export async function getAppUserByEmail(email: string) {
+  const normalized = email.trim().toLowerCase();
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    return null;
+  }
+  const { data } = await supabase
+    .from("users")
+    .select("*")
+    .ilike("email", normalized)
+    .maybeSingle();
+  if (!data) {
+    return null;
+  }
+  return toAppUserRecord(data);
+}
+
+export async function getPasswordHashByUserId(userId: string): Promise<string | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    return null;
+  }
+  const { data } = await supabase
+    .from("users")
+    .select("password_hash")
+    .eq("id", userId)
+    .maybeSingle();
+  return data?.password_hash ? String(data.password_hash) : null;
+}
+
+export async function createAppUserWithPassword(params: {
+  email: string;
+  name?: string | null;
+  passwordHash: string;
+  referrerId?: string | null;
+}) {
+  const supabase = getSupabaseAdminClient();
+  const id = randomUUID();
+  const record: AppUserRecord = {
+    id,
+    clerkUserId: null,
+    email: params.email.trim().toLowerCase(),
+    name: params.name ?? null,
+    avatarUrl: null,
+    stripeCustomerId: null,
+    knowledgeLevel: "explorer",
+    preferredLanguage: "zh-CN",
+    referrerId: params.referrerId ?? null,
+  };
+
+  if (supabase) {
+    const { data, error } = await supabase
+      .from("users")
+      .insert({
+        id: record.id,
+        clerk_user_id: null,
+        email: record.email,
+        name: record.name,
+        avatar_url: record.avatarUrl,
+        stripe_customer_id: record.stripeCustomerId,
+        knowledge_level: record.knowledgeLevel,
+        preferred_language: record.preferredLanguage,
+        referrer_id: record.referrerId,
+        password_hash: params.passwordHash,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+    return toAppUserRecord(data);
+  }
+
+  return record;
+}
+
 export async function getAppUserById(userId: string) {
   const cached = Array.from(userStore.values()).find((user) => user.id === userId);
   if (cached) {

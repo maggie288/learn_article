@@ -15,17 +15,18 @@
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
-    "@clerk/nextjs": "^7.0.1",
     "@sentry/nextjs": "^10.42.0",
     "@supabase/ssr": "^0.9.0",
     "@supabase/supabase-js": "^2.98.0",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.36.3",
+    "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "inngest": "^3.52.6",
     "lucide-react": "^0.577.0",
     "next": "^16.1.6",
+    "next-auth": "^4.24.13",
     "pdfjs-dist": "^5.5.207",
     "posthog-js": "^1.359.1",
     "posthog-node": "^5.28.0",
@@ -37,6 +38,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^25.3.5",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
