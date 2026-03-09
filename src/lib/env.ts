@@ -1,9 +1,15 @@
 import { z } from "zod";
 
+// 构建时 Vercel 可能把未填的变量当成空字符串 ""，.url() 会报错；先当空为 undefined
+const optionalUrl = z.preprocess(
+  (val) => (val === "" || val == null ? undefined : val),
+  z.string().url().optional(),
+);
+
 const envSchema = z.object({
   NEXT_PUBLIC_APP_ENV: z.enum(["development", "staging", "production"]).default("development"),
-  NEXT_PUBLIC_APP_URL: z.string().url().optional(),
-  NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
+  NEXT_PUBLIC_APP_URL: optionalUrl,
+  NEXT_PUBLIC_SUPABASE_URL: optionalUrl,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
@@ -16,13 +22,13 @@ const envSchema = z.object({
   STRIPE_PRO_MONTHLY_PRICE_ID: z.string().optional(),
   STRIPE_PRO_YEARLY_PRICE_ID: z.string().optional(),
   STRIPE_TEAM_PRICE_ID: z.string().optional(),
-  UPSTASH_REDIS_REST_URL: z.string().url().optional(),
+  UPSTASH_REDIS_REST_URL: optionalUrl,
   UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
   NEXT_PUBLIC_POSTHOG_KEY: z.string().optional(),
-  NEXT_PUBLIC_POSTHOG_HOST: z.string().url().optional(),
+  NEXT_PUBLIC_POSTHOG_HOST: optionalUrl,
   INNGEST_EVENT_KEY: z.string().optional(),
   INNGEST_SIGNING_KEY: z.string().optional(),
-  ENGINE_PYTHON_URL: z.string().url().optional(),
+  ENGINE_PYTHON_URL: optionalUrl,
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
