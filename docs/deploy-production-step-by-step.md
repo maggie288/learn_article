@@ -4,6 +4,18 @@
 
 ---
 
+## 各服务在哪里注册 / 登录
+
+| 服务 | 注册与登录入口 | 说明 |
+|------|----------------|------|
+| **Stripe** | [https://dashboard.stripe.com](https://dashboard.stripe.com) | 用邮箱注册；第 5 步配 Webhook 在 **Developers → Webhooks** |
+| **Clerk** | [https://dashboard.clerk.com](https://dashboard.clerk.com) | 用 GitHub/邮箱注册；第 6 步配生产域名在 **你的应用 → Configure → Domains** |
+| **Inngest** | [https://app.inngest.com](https://app.inngest.com) | 用 GitHub 登录；第 7 步配生产环境在 **你的 App → Environments** 或 **Sync** |
+
+注册后，API Key / Signing Key 等都在各自 Dashboard 里按上文第 3、5、6、7 步的路径获取。
+
+---
+
 ## 第 0 步：本地预检（约 5 分钟）
 
 - [ ] 代码已提交到 Git，无未提交的敏感信息（`.env`、`.env.local` 已在 `.gitignore`，不要提交）
@@ -77,18 +89,93 @@
 
 ---
 
-## 第 4 步：Supabase 生产库
+## 第 4 步：Supabase 生产库（详细）
 
-- [ ] 若与开发共用同一 Supabase 项目：确认所有 migrations 已跑（Supabase Dashboard → SQL Editor 或 `supabase db push`）
-- [ ] 若新建生产项目：新建项目后，在 SQL Editor 中按顺序执行 `supabase/migrations/` 下所有 `.sql` 文件
-- [ ] 确认 `users`、`courses`、`chapters`、`user_progress`、`subscriptions` 等表存在
+> 若你**开发和生产共用同一个 Supabase 项目**，可跳过 4.1～4.2，直接从 **4.3** 拿 API 与密钥，再确认 **4.4～4.5** 的迁移已跑过、表存在即可。
+
+### 4.1 注册与登录
+
+- [ ] 打开 [https://supabase.com](https://supabase.com)，点击 **Start your project**
+- [ ] 使用 GitHub / GitLab / 邮箱 登录或注册（推荐用 GitHub 一键登录）
+- [ ] 登录后进入 **Dashboard**（项目列表页）
+
+### 4.2 新建项目（生产库）
+
+- [ ] 点击 **New project**
+- [ ] **Organization**：选默认或你建好的组织
+- [ ] **Name**：填项目名，例如 `learn-article-prod` 或 `paperflow-production`
+- [ ] **Database Password**：为数据库设置一个**强密码**（务必保存到密码管理器；后续用 Service Role Key 连库，一般不会再用这个密码，但重置会麻烦）
+- [ ] **Region**：选离你用户最近的区域（如 `Northeast Asia (Tokyo)`、`West US` 等）
+- [ ] 点击 **Create new project**，等待约 1～2 分钟，状态变为 **Active**
+
+### 4.3 拿到 API 地址和密钥（给 Vercel 用）
+
+- [ ] 在项目里左侧点 **Project Settings**（齿轮图标）
+- [ ] 左侧选 **API**
+- [ ] 在 **Project URL** 处复制地址，即 `NEXT_PUBLIC_SUPABASE_URL`（形如 `https://xxxxx.supabase.co`）
+- [ ] **Project API keys** 里：
+  - **anon public**：复制，即 `NEXT_PUBLIC_SUPABASE_ANON_KEY`（可暴露在前端）
+  - **service_role**：点击 **Reveal** 后复制，即 `SUPABASE_SERVICE_ROLE_KEY`（仅服务端、绝不要暴露到前端）
+- [ ] 把这三个值填到 **Vercel → 项目 → Settings → Environment Variables** 的 Production 中（若第 3 步还没填 Supabase 相关变量，在这里补上）
+
+### 4.4 执行数据库迁移（建表）
+
+本仓库的迁移文件在 `supabase/migrations/`，需**按文件名顺序**执行下面三个文件里的 SQL。
+
+**方式 A：在 Supabase 网页里用 SQL Editor 执行（推荐，无需装 CLI）**
+
+- [ ] 在 Supabase 项目左侧点 **SQL Editor**
+- [ ] 点击 **New query**
+
+**第一个文件：`20260309000000_initial_schema.sql`**
+
+- [ ] 打开你本地的 `supabase/migrations/20260309000000_initial_schema.sql`，**全选并复制**全部内容
+- [ ] 在 SQL Editor 里粘贴，点击 **Run**（或 Ctrl/Cmd + Enter）
+- [ ] 确认底部显示 **Success**，无报错
+
+**第二个文件：`20260309010000_generation_tasks.sql`**
+
+- [ ] 打开 `supabase/migrations/20260309010000_generation_tasks.sql`，全选复制
+- [ ] SQL Editor 里 **New query**，粘贴后 **Run**，确认 Success
+
+**第三个文件：`20260309020000_add_clerk_user_id.sql`**
+
+- [ ] 打开 `supabase/migrations/20260309020000_add_clerk_user_id.sql`，全选复制
+- [ ] SQL Editor 里 **New query**，粘贴后 **Run**，确认 Success
+
+**方式 B：用 Supabase CLI（本地已安装 CLI 时）**
+
+- [ ] 终端里：`npx supabase link --project-ref 你的项目ID`（项目 ID 在 Settings → General → Reference ID）
+- [ ] 按提示输入数据库密码（4.2 步设的）
+- [ ] 执行：`npx supabase db push`
+- [ ] 看到迁移成功提示即可
+
+### 4.5 确认表已建好
+
+- [ ] 在 Supabase 左侧点 **Table Editor**
+- [ ] 确认能看到以下表（名称可能带 schema，在 `public` 下）：
+  - `users`、`subscriptions`、`usage_quotas`、`sources`、`courses`、`chapters`、`concepts`、`concept_edges`、`user_progress`、`user_achievements`、`user_favorites`、`generation_tasks` 等
+- [ ] 或用 **SQL Editor** 执行下面语句，应返回一列表名：
+  ```sql
+  select table_name from information_schema.tables
+  where table_schema = 'public' and table_type = 'BASE TABLE'
+  order by table_name;
+  ```
+
+### 4.6 小结
+
+- [ ] Supabase 项目已创建并处于 Active
+- [ ] 已把 **Project URL**、**anon key**、**service_role key** 填到 Vercel 环境变量
+- [ ] 三个迁移文件均已成功执行，表结构齐全
+- [ ] 若第 3 步时还没填 Supabase 变量，填好后在 Vercel 里 **Redeploy** 一次
 
 ---
 
 ## 第 5 步：Stripe Webhook（生产）
 
+- **在哪里操作**：登录 [Stripe Dashboard](https://dashboard.stripe.com) → 左侧 **Developers** → **Webhooks** → **Add endpoint**（若还没有生产 Webhook）
 - [ ] 部署完成后，拿到生产域名，例如 `https://your-app.vercel.app`
-- [ ] Stripe Dashboard → **Developers → Webhooks → Add endpoint**
+- [ ] 在 Webhooks 页点击 **Add endpoint**
   - **Endpoint URL**：`https://你的生产域名/api/stripe/webhook`
   - **Events to send**：勾选 `checkout.session.completed`、`customer.subscription.updated`、`customer.subscription.deleted`、`invoice.payment_succeeded`（按你实际 webhook 代码里用到的选）
 - [ ] 创建后点击 **Reveal** signing secret，复制
@@ -98,8 +185,8 @@
 
 ## 第 6 步：Clerk 生产
 
-- [ ] Clerk Dashboard → 你的应用 → **Configure → Paths**（或 Domains）
-- [ ] 添加生产域名（如 `your-app.vercel.app` 或自定义域名）
+- **在哪里操作**：登录 [Clerk Dashboard](https://dashboard.clerk.com) → 选中你的应用（或先 **Create application** 新建）→ 左侧 **Configure** → **Domains** / **Paths**
+- [ ] 在 **Domains** 中添加生产域名（如 `your-app.vercel.app` 或自定义域名）
 - [ ] **Settings → URLs**：Sign-in URL、Sign-up URL、After sign-in / sign-up 等可保持默认或指向生产路径（如 `https://你的域名/dashboard`）
 - [ ] 确认生产环境用的是 **Production** 下的 API Keys（第 3 步里填的应是 Production 的 Key）
 
@@ -107,9 +194,9 @@
 
 ## 第 7 步：Inngest 生产
 
-- [ ] Inngest Dashboard → 你的 App → **Sync** 或 **Environment**
-- [ ] 添加 Production 环境，**App URL** 填 `https://你的生产域名/api/inngest`
-- [ ] 确认 Production 使用的 **Signing Key** 已填入 Vercel 的 `INNGEST_SIGNING_KEY`
+- **在哪里操作**：登录 [Inngest Dashboard](https://app.inngest.com) → 选中你的 App（或 **Create app** 新建）→ 左侧 **Manage** → **Environments**（或 **Sync**），为生产环境填 App URL 和查看 Signing Key
+- [ ] 添加或编辑 **Production** 环境，**App URL** 填 `https://你的生产域名/api/inngest`
+- [ ] 确认该环境使用的 **Signing Key** 已填入 Vercel 的 `INNGEST_SIGNING_KEY`
 
 ---
 
