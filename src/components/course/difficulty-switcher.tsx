@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { DifficultyLevel } from "@/lib/engine/types";
 
 const DIFFICULTIES: { value: DifficultyLevel; label: string }[] = [
@@ -12,6 +12,7 @@ const DIFFICULTIES: { value: DifficultyLevel; label: string }[] = [
 
 interface DifficultySwitcherProps {
   slug: string;
+  courseId: string;
   currentDifficulty: DifficultyLevel;
   /** 当前论文已发布的难度列表（用于灰显未生成的）. */
   availableDifficulties?: DifficultyLevel[];
@@ -23,11 +24,13 @@ interface DifficultySwitcherProps {
 /** 同一论文三种难度切换（Explorer / Builder / Researcher）. */
 export function DifficultySwitcher({
   slug,
+  courseId,
   currentDifficulty,
   availableDifficulties = ["explorer", "builder", "researcher"],
   chapterIndex,
   className = "",
 }: DifficultySwitcherProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
 
   const basePath = `/paper/${slug}`;
@@ -51,10 +54,22 @@ export function DifficultySwitcher({
             </span>
           );
         }
+        const handleClick = (e: React.MouseEvent) => {
+          if (isActive) return;
+          e.preventDefault();
+          fetch(`/api/courses/${courseId}/difficulty-switch`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fromLevel: currentDifficulty, toLevel: d.value }),
+          }).catch(() => {});
+          router.push(href);
+        };
+
         return (
           <Link
             key={d.value}
             href={href}
+            onClick={handleClick}
             className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
               isActive
                 ? "bg-cyan-500/20 text-cyan-300"

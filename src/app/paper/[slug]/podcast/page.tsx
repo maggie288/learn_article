@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCourseBySlug } from "@/lib/db/repositories";
+import { PodcastTranscript } from "./podcast-transcript";
 import { PodcastPlayer } from "./podcast-player";
 
 interface PodcastPageProps {
@@ -50,6 +51,7 @@ export default async function PodcastPage({ params }: PodcastPageProps) {
               index: ch.orderIndex,
               title: ch.title,
               audioUrl: ch.audioUrl ?? undefined,
+              narration: ch.narration ?? undefined,
             }))}
           />
         ) : (
@@ -93,6 +95,16 @@ export default async function PodcastPage({ params }: PodcastPageProps) {
             ))}
           </ul>
         </section>
+
+        {!hasFullPodcast && (
+          <PodcastTranscript
+            chapters={course.chapters.map((ch) => ({
+              index: ch.orderIndex,
+              title: ch.title,
+              narration: ch.narration ?? undefined,
+            }))}
+          />
+        )}
       </div>
     </main>
   );

@@ -4,8 +4,12 @@ import { getAuthContext } from "@/lib/auth/session";
 import { captureServerEvent } from "@/lib/analytics/server";
 import {
   ensureCourseCompletedAchievement,
+  getChapterIdByCourseAndIndex,
+  getConceptIdsByNames,
   getCourseById,
+  insertQuizAttempts,
   upsertCourseProgress,
+  upsertUserConcept,
 } from "@/lib/db/repositories";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { err, ok } from "@/lib/types/api";
@@ -108,6 +112,40 @@ export async function POST(request: Request, { params }: QuizRouteProps) {
     quizScore: quizScore ?? undefined,
     quizAnswers: answers as unknown,
   });
+
+  const course = await getCourseById(courseId);
+  const chapter = course?.chapters[chapterIndex];
+  const questions = Array.isArray(chapter?.quizQuestions) ? chapter.quizQuestions : [];
+  const chapterId = await getChapterIdByCourseAndIndex(courseId, chapterIndex);
+  if (chapterId && questions.length > 0 && answers.length === questions.length) {
+    const attempts = (questions as Array<{ options: string[]; correct: string }>).map((q, i) => {
+      const a = answers[i];
+      const selected = typeof a === "number" ? q.options[a] : String(a);
+      return {
+        questionIndex: i,
+        selectedAnswer: selected ?? null,
+        correct: selected === q.correct,
+        timeSpentSeconds: 0,
+      };
+    });
+    await insertQuizAttempts({
+      userId: authContext.userId,
+      courseId,
+      chapterId,
+      attempts,
+    });
+  }
+  if (chapterId && chapter?.conceptNames?.length && quizScore != null) {
+    const conceptIds = await getConceptIdsByNames(chapter.conceptNames);
+    for (const [, conceptId] of conceptIds) {
+      await upsertUserConcept({
+        userId: authContext.userId,
+        conceptId,
+        masteryLevel: quizScore,
+        incrementReview: true,
+      });
+    }
+  }
 
   await captureServerEvent({
     distinctId: authContext.userId,

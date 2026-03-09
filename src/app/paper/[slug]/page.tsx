@@ -92,6 +92,7 @@ export default async function PaperPage({ params, searchParams }: PaperPageProps
             </span>
             <DifficultySwitcher
               slug={slug}
+              courseId={effectiveCourse.id}
               currentDifficulty={effectiveCourse.difficulty}
               availableDifficulties={availableDifficulties}
             />

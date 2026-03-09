@@ -89,7 +89,7 @@ export async function createNarrationForChapterWithLLM(params: {
   language: string;
 }): Promise<GeneratedChapter> {
   if (!hasAnyLlmKey()) {
-    throw new Error("At least one of ANTHROPIC_API_KEY or MINIMAX_API_KEY is required for LLM narrator.");
+    throw new Error("MINIMAX_API_KEY is required for LLM narrator.");
   }
 
   const userMessage = buildUserMessage({

@@ -18,6 +18,11 @@ function trackShare(platform: SharePlatform, courseId: string) {
   } catch {
     // ignore
   }
+  fetch(`/api/courses/${courseId}/share`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ platform }),
+  }).catch(() => {});
 }
 
 function toAbsoluteUrl(url: string): string {

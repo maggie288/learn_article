@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 
-export function WaitlistForm() {
+interface WaitlistFormProps {
+  onSuccess?: () => void;
+}
+
+export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "success" | "error">("idle");
   const [message, setMessage] = useState("");
@@ -18,11 +22,12 @@ export function WaitlistForm() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: email.trim() }),
     });
-    const json = (await res.json()) as { success: boolean; error?: { message: string } };
+    const json = (await res.json()) as { success?: boolean; error?: { message: string } };
 
-    if (res.ok && json.success) {
+    if (res.ok && json.success !== false) {
       setStatus("success");
       setEmail("");
+      onSuccess?.();
       setMessage("Thanks! We’ll be in touch.");
     } else {
       setStatus("error");

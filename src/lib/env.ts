@@ -92,14 +92,13 @@ const phaseOneRequiredKeys = [
   "INNGEST_SIGNING_KEY",
 ] as const;
 
-/** 至少配置一个 LLM Key（ANTHROPIC 或 MINIMAX）才视为就绪 */
-const hasLlmKey = () =>
-  Boolean(serverEnv.ANTHROPIC_API_KEY?.trim() || serverEnv.MINIMAX_API_KEY?.trim());
+/** 配置 MINIMAX_API_KEY 才视为 LLM 就绪 */
+const hasLlmKey = () => Boolean(serverEnv.MINIMAX_API_KEY?.trim());
 
 export function getMissingEnvKeys(): string[] {
   const missing: string[] = phaseOneRequiredKeys.filter((key) => !serverEnv[key as keyof AppEnv]);
   if (!hasLlmKey()) {
-    missing.push("ANTHROPIC_API_KEY or MINIMAX_API_KEY");
+    missing.push("MINIMAX_API_KEY");
   }
   return missing;
 }

@@ -4,6 +4,7 @@ import { canAccessChapter, getAuthContext } from "@/lib/auth/session";
 import { splitNarrationIntoParagraphs } from "@/lib/utils/narration";
 import { ChapterViewedTracker } from "@/components/analytics/chapter-viewed-tracker";
 import { ChapterProgressButton } from "@/components/course/chapter-progress-button";
+import { CompletionCelebration } from "@/components/course/completion-celebration";
 import { DifficultySwitcher } from "@/components/course/difficulty-switcher";
 import { QuizModalTrigger } from "@/components/course/quiz-modal-trigger";
 import { ReadAloudButton } from "@/components/course/read-aloud-button";
@@ -80,6 +81,7 @@ export default async function ChapterPage({ params, searchParams }: ChapterPageP
           <div className="flex items-center gap-3">
             <DifficultySwitcher
               slug={slug}
+              courseId={effectiveCourse.id}
               currentDifficulty={effectiveCourse.difficulty}
               availableDifficulties={availableDifficulties}
               chapterIndex={chapterIndex}
@@ -343,6 +345,16 @@ export default async function ChapterPage({ params, searchParams }: ChapterPageP
             )}
           </div>
         </nav>
+
+        {nextIndex === null && unlocked ? (
+          <CompletionCelebration
+            courseId={effectiveCourse.id}
+            courseTitle={effectiveCourse.sourceTitle ?? slug}
+            slug={slug}
+            shareUrl={`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/paper/${slug}${chapterQuery}`}
+            difficulty={effectiveCourse.difficulty}
+          />
+        ) : null}
       </div>
     </main>
   );

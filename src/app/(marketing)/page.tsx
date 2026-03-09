@@ -1,11 +1,16 @@
 import Link from "next/link";
 import { getAuthContext } from "@/lib/auth/session";
+import { listPublishedCourses } from "@/lib/db/repositories";
+import { EmailCapture } from "@/components/landing/email-capture";
+import { HowItWorks } from "@/components/landing/how-it-works";
+import { SampleCourses } from "@/components/landing/sample-courses";
 
 export default async function HomePage() {
   const auth = await getAuthContext();
+  const sampleCourses = await listPublishedCourses(5);
 
   return (
-    <main className="mx-auto max-w-3xl px-6 pt-20 pb-24 sm:pt-28 sm:pb-32">
+    <main className="mx-auto max-w-4xl px-6 pt-20 pb-24 sm:pt-28 sm:pb-32">
       {/* Hero */}
       <section className="text-center">
         <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl md:text-6xl">
@@ -54,7 +59,13 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* 一句话说明 */}
+      <HowItWorks />
+
+      <SampleCourses courses={sampleCourses} />
+
+      <EmailCapture />
+
+      {/* Footer links */}
       <section className="mt-24 border-t border-slate-800/60 pt-16">
         <p className="text-center text-sm text-slate-500">
           论文 URL → 结构化提取 → 学习路径 → 异步生成课程

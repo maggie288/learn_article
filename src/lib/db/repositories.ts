@@ -2525,3 +2525,158 @@ export async function updateShortVideoExport(
   if (patch.errorMessage !== undefined) payload.error_message = patch.errorMessage;
   await supabase.from("short_video_exports").update(payload).eq("id", id);
 }
+
+// ---------- 护城河：用户学习行为与 PKG（CURSOR.md） ----------
+
+/** 按课程与章节序号取 chapter_id */
+export async function getChapterIdByCourseAndIndex(
+  courseId: string,
+  orderIndex: number,
+): Promise<string | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+  const { data } = await supabase
+    .from("chapters")
+    .select("id")
+    .eq("course_id", courseId)
+    .eq("order_index", orderIndex)
+    .maybeSingle();
+  return data?.id ? String(data.id) : null;
+}
+
+export async function insertChapterView(params: {
+  userId: string;
+  chapterId: string;
+  durationSeconds?: number;
+}): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  await supabase.from("chapter_views").insert({
+    user_id: params.userId,
+    chapter_id: params.chapterId,
+    duration_seconds: params.durationSeconds ?? 0,
+  });
+}
+
+export interface QuizAttemptRow {
+  questionIndex: number;
+  selectedAnswer: string | null;
+  correct: boolean;
+  timeSpentSeconds?: number;
+}
+
+export async function insertQuizAttempts(params: {
+  userId: string;
+  courseId: string;
+  chapterId: string;
+  attempts: QuizAttemptRow[];
+}): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase || params.attempts.length === 0) return;
+  await supabase.from("quiz_attempts").insert(
+    params.attempts.map((a) => ({
+      user_id: params.userId,
+      course_id: params.courseId,
+      chapter_id: params.chapterId,
+      question_index: a.questionIndex,
+      selected_answer: a.selectedAnswer,
+      correct: a.correct,
+      time_spent_seconds: a.timeSpentSeconds ?? 0,
+    })),
+  );
+}
+
+const CONTENT_ELEMENT_TYPES = ["analogy", "formula", "code", "svg", "audio"] as const;
+const CONTENT_ACTIONS = ["viewed", "expanded", "collapsed", "replayed", "skipped"] as const;
+
+export async function insertContentInteraction(params: {
+  userId: string;
+  chapterId: string;
+  elementType: (typeof CONTENT_ELEMENT_TYPES)[number];
+  action: (typeof CONTENT_ACTIONS)[number];
+}): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  await supabase.from("content_interactions").insert({
+    user_id: params.userId,
+    chapter_id: params.chapterId,
+    element_type: params.elementType,
+    action: params.action,
+  });
+}
+
+export async function insertDifficultySwitch(params: {
+  userId: string;
+  courseId: string;
+  fromLevel: string;
+  toLevel: string;
+}): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  await supabase.from("difficulty_switches").insert({
+    user_id: params.userId,
+    course_id: params.courseId,
+    from_level: params.fromLevel,
+    to_level: params.toLevel,
+  });
+}
+
+export async function insertCourseShare(params: {
+  userId: string;
+  courseId: string;
+  platform: string;
+}): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  await supabase.from("course_shares").insert({
+    user_id: params.userId,
+    course_id: params.courseId,
+    platform: params.platform,
+  });
+}
+
+/** 按概念名解析 concept_id（concepts 表） */
+export async function getConceptIdsByNames(names: string[]): Promise<Map<string, string>> {
+  const supabase = getSupabaseAdminClient();
+  const map = new Map<string, string>();
+  if (!supabase || names.length === 0) return map;
+  const { data } = await supabase.from("concepts").select("id, name").in("name", names);
+  for (const row of data ?? []) {
+    map.set(String(row.name), String(row.id));
+  }
+  return map;
+}
+
+/** 更新用户对某概念的掌握度（测验后调用，mastery_level 0–1） */
+export async function upsertUserConcept(params: {
+  userId: string;
+  conceptId: string;
+  masteryLevel: number;
+  incrementReview?: boolean;
+}): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  const level = Math.max(0, Math.min(1, params.masteryLevel));
+  const { data: existing } = await supabase
+    .from("user_concepts")
+    .select("mastery_level, review_count")
+    .eq("user_id", params.userId)
+    .eq("concept_id", params.conceptId)
+    .maybeSingle();
+
+  const reviewCount = (existing?.review_count ?? 0) + (params.incrementReview ? 1 : 0);
+  const newMastery = existing
+    ? (existing.mastery_level + level) / 2
+    : level;
+
+  await supabase.from("user_concepts").upsert(
+    {
+      user_id: params.userId,
+      concept_id: params.conceptId,
+      mastery_level: Math.round(newMastery * 100) / 100,
+      last_reviewed: new Date().toISOString(),
+      review_count: reviewCount,
+    },
+    { onConflict: "user_id,concept_id" },
+  );
+}

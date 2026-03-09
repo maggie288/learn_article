@@ -1,16 +1,37 @@
 import Link from "next/link";
-import { listPublishedCourses } from "@/lib/db/repositories";
+import { Suspense } from "react";
+import {
+  listPublishedCourses,
+  listTrendingCourses,
+  searchCourses,
+} from "@/lib/db/repositories";
+import { ExploreToolbar } from "@/components/explore/explore-toolbar";
 
-export default async function ExplorePage() {
-  const courses = await listPublishedCourses(24);
+interface ExplorePageProps {
+  searchParams?: Promise<{ q?: string; sort?: string }>;
+}
+
+export default async function ExplorePage({ searchParams }: ExplorePageProps) {
+  const sp = await searchParams;
+  const q = sp?.q?.trim() ?? "";
+  const sort = sp?.sort ?? "latest";
+
+  const courses = q
+    ? await searchCourses(q, 24)
+    : sort === "trending"
+      ? await listTrendingCourses(24)
+      : await listPublishedCourses(24);
 
   return (
     <section className="space-y-8">
       <div className="space-y-4">
         <h1 className="text-3xl font-semibold">Explore</h1>
         <p className="max-w-2xl text-slate-300">
-          当前发现页先提供已发布课程列表，后续再补热门、搜索和分类。
+          搜索或按最新/热门浏览已发布课程。
         </p>
+        <Suspense fallback={<div className="h-20 animate-pulse rounded-xl bg-slate-800/50" />}>
+          <ExploreToolbar />
+        </Suspense>
       </div>
 
       {courses.length > 0 ? (
@@ -32,7 +53,9 @@ export default async function ExplorePage() {
         </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-slate-700 p-6 text-slate-400">
-          暂无公开课程。先从 `Generate` 页面生成一篇课程即可在这里看到。
+          {q
+            ? "未找到匹配的课程，试试其他关键词。"
+            : "暂无公开课程。先从 Generate 页面生成一篇课程即可在这里看到。"}
         </div>
       )}
     </section>
