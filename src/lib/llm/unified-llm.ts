@@ -12,7 +12,8 @@ export interface LlmChatResult {
   model: string;
 }
 
-const MINIMAX_MODEL = "M2-her";
+/** 默认用 MiniMax-M2.5，Coding Plan 套餐扣额度；M2-her 可能走余额会 1008 */
+const DEFAULT_MINIMAX_MODEL = "MiniMax-M2.5";
 const MINIMAX_CHAT_PATH = "/v1/text/chatcompletion_v2";
 
 function getMinimaxChatUrl(): string {
@@ -33,6 +34,7 @@ async function callMiniMax(params: {
 }): Promise<LlmChatResult> {
   const key = serverEnv.MINIMAX_API_KEY;
   if (!key?.trim()) throw new Error("MINIMAX_API_KEY not set");
+  const model = serverEnv.MINIMAX_MODEL?.trim() || DEFAULT_MINIMAX_MODEL;
   const res = await fetch(getMinimaxChatUrl(), {
     method: "POST",
     headers: {
@@ -40,7 +42,7 @@ async function callMiniMax(params: {
       Authorization: `Bearer ${key}`,
     },
     body: JSON.stringify({
-      model: MINIMAX_MODEL,
+      model,
       messages: [
         { role: "system", content: params.system },
         { role: "user", content: params.user },
@@ -58,12 +60,17 @@ async function callMiniMax(params: {
     base_resp?: { status_code?: number; status_msg?: string };
   };
   if (data.base_resp?.status_code !== undefined && data.base_resp.status_code !== 0) {
-    throw new Error(
-      `MiniMax error ${data.base_resp.status_code}: ${data.base_resp.status_msg ?? ""}`,
-    );
+    const code = data.base_resp.status_code;
+    const msg = data.base_resp.status_msg ?? "";
+    if (code === 1008) {
+      throw new Error(
+        "MiniMax 余额不足 (1008)。请到 MiniMax 开放平台充值后再试。国内: platform.minimaxi.com，海外: platform.minimax.io",
+      );
+    }
+    throw new Error(`MiniMax error ${code}: ${msg}`);
   }
   const text = data.choices?.[0]?.message?.content ?? "";
-  return { text, provider: "minimax", model: MINIMAX_MODEL };
+  return { text, provider: "minimax", model };
 }
 
 /**

@@ -16,6 +16,8 @@ const envSchema = z.object({
   MINIMAX_API_KEY: z.string().optional(),
   /** 国内开放平台用 https://api.minimaxi.com，海外默认 https://api.minimax.io */
   MINIMAX_API_BASE: z.string().optional(),
+  /** Coding Plan 请用 MiniMax-M2.5；不填默认 MiniMax-M2.5 */
+  MINIMAX_MODEL: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   LLM_STRATEGY: z.enum(["first", "cheapest"]).optional(),
   NEXTAUTH_SECRET: z.string().optional(),
@@ -58,6 +60,7 @@ export const serverEnv = envSchema.parse({
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
   MINIMAX_API_KEY: process.env.MINIMAX_API_KEY,
   MINIMAX_API_BASE: process.env.MINIMAX_API_BASE,
+  MINIMAX_MODEL: process.env.MINIMAX_MODEL,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   LLM_STRATEGY: process.env.LLM_STRATEGY,
   NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
