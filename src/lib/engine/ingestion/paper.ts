@@ -1,5 +1,10 @@
 import { slugify } from "@/lib/utils/slug";
 import type { Section, SourceDocument } from "@/lib/engine/types";
+import {
+  ingestGitHubFromUrl,
+  isGitHubRepoUrl,
+  normalizeGitHubUrl,
+} from "@/lib/engine/ingestion/github";
 
 const SECTION_HEADING_PATTERN =
   /^(?:\d+(?:\.\d+)*)\s+[A-Z][A-Za-z0-9 ,:/()-]{2,}$|^(?:Abstract|Introduction|Method|Methods|Approach|Experiments|Results|Conclusion|Related Work)$/;
@@ -179,4 +184,33 @@ export async function ingestPaperFromUrl(sourceUrl: string): Promise<SourceDocum
     rawText,
     fallbackUsed,
   };
+}
+
+/**
+ * 统一入口：根据 URL 类型选择论文或 GitHub 流水线，产出 SourceDocument。
+ */
+export async function ingestFromUrl(sourceUrl: string): Promise<SourceDocument> {
+  if (isGitHubRepoUrl(sourceUrl)) {
+    const doc = await ingestGitHubFromUrl(sourceUrl);
+    if (doc) return doc;
+  }
+  return ingestPaperFromUrl(sourceUrl);
+}
+
+/**
+ * 标准化输入 URL（论文或 GitHub），用于去重与缓存 key。
+ */
+export function normalizeSourceUrl(sourceUrl: string): {
+  sourceUrl: string;
+  pdfUrl?: string;
+  slug: string;
+} {
+  if (isGitHubRepoUrl(sourceUrl)) {
+    const { owner, repo, slug } = normalizeGitHubUrl(sourceUrl);
+    return {
+      sourceUrl: `https://github.com/${owner}/${repo}`,
+      slug,
+    };
+  }
+  return normalizePaperUrl(sourceUrl);
 }

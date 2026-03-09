@@ -26,6 +26,8 @@ export async function GET(_request: Request, { params }: StatusRouteProps) {
       courseId: task.courseId,
       errorMessage: task.errorMessage,
       updatedAt: task.updatedAt,
+      progressTotalChapters: task.progressTotalChapters ?? undefined,
+      progressChaptersDone: task.progressChaptersDone ?? undefined,
     }),
   );
 }

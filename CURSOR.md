@@ -6,7 +6,7 @@ AI 驱动的论文/代码学习引擎。录入 URL，由核心生成引擎产出
 ## 技术栈
 - Next.js App Router + TypeScript（严格模式）
 - Supabase（PostgreSQL + Storage）
-- Claude API（主力 LLM）
+- LLM：Claude API + MiniMax（双 Key 时自动选最先返回或最便宜，见 `src/lib/llm/unified-llm.ts`）
 - Inngest（异步任务编排）
 - Tailwind + shadcn/ui 风格组件
 - Stripe（后续支付）

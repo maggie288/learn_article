@@ -12,6 +12,7 @@ import type {
   DashboardSummary,
   FavoriteRecord,
   GenerationTaskRecord,
+  ShortVideoExportRecord,
   SourceRecord,
   UsageQuotaRecord,
 } from "@/lib/db/types";
@@ -21,6 +22,7 @@ import type {
   ExtractionResult,
   GeneratedChapter,
   LearningPath,
+  LearningPathChapter,
   SourceDocument,
 } from "@/lib/engine/types";
 
@@ -96,6 +98,8 @@ function toCourseRecord(
         : Number(row.estimated_minutes ?? 0),
     qualityScores: (row.quality_scores as Record<string, number> | null) ?? null,
     chapters,
+    blogHtml: row.blog_html ? String(row.blog_html) : null,
+    podcastUrl: row.podcast_url ? String(row.podcast_url) : null,
     createdAt: String(row.created_at ?? new Date().toISOString()),
     publishedAt: row.published_at ? String(row.published_at) : null,
   };
@@ -112,6 +116,10 @@ function toTaskRecord(row: Record<string, unknown>): GenerationTaskRecord {
     errorMessage: row.error_message ? String(row.error_message) : null,
     createdAt: String(row.created_at ?? new Date().toISOString()),
     updatedAt: String(row.updated_at ?? new Date().toISOString()),
+    progressTotalChapters:
+      typeof row.progress_total_chapters === "number" ? row.progress_total_chapters : null,
+    progressChaptersDone:
+      typeof row.progress_chapters_done === "number" ? row.progress_chapters_done : null,
   };
 }
 
@@ -272,6 +280,142 @@ export async function saveExtractionResult(sourceUrl: string, extraction: Extrac
   return updated;
 }
 
+/**
+ * Merge extraction concept graph into global concepts and concept_edges tables.
+ * 每处理一篇论文，全局概念图谱增长（架构 1.4 护城河：累积知识图谱）。
+ */
+export async function updateGlobalConceptGraph(
+  conceptGraph: ExtractionResult["conceptGraph"],
+): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    return;
+  }
+
+  const names = conceptGraph.concepts.map((c) => c.name);
+  for (const c of conceptGraph.concepts) {
+    await supabase.from("concepts").upsert(
+      {
+        name: c.name,
+        domain: c.domain ?? null,
+        difficulty_level: c.difficulty,
+        description: c.definition ?? null,
+        common_misconceptions: Array.isArray(c.commonMisconceptions) ? c.commonMisconceptions : [],
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "name" },
+    );
+  }
+
+  const { data: conceptRows } = await supabase
+    .from("concepts")
+    .select("id, name")
+    .in("name", names);
+  const nameToId = new Map<string, string>();
+  for (const r of conceptRows ?? []) {
+    nameToId.set(String(r.name), String(r.id));
+  }
+
+  for (const e of conceptGraph.edges) {
+    const fromId = nameToId.get(e.from);
+    const toId = nameToId.get(e.to);
+    if (!fromId || !toId) continue;
+
+    await supabase.from("concept_edges").upsert(
+      {
+        from_concept_id: fromId,
+        to_concept_id: toId,
+        relation_type: e.relationType ?? null,
+        strength: typeof e.strength === "number" ? e.strength : 1,
+      },
+      { onConflict: "from_concept_id,to_concept_id" },
+    );
+  }
+}
+
+/** 按概念名查询全局概念图中的边（用于 Connector Agent 等）。 */
+export async function getGlobalConceptEdges(
+  conceptNames: string[],
+): Promise<Array<{ from: string; to: string; relationType?: string }>> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase || conceptNames.length === 0) {
+    return [];
+  }
+
+  const { data: conceptRows } = await supabase
+    .from("concepts")
+    .select("id, name")
+    .in("name", conceptNames);
+  const idToName = new Map<string, string>();
+  const ids: string[] = [];
+  for (const r of conceptRows ?? []) {
+    const id = String(r.id);
+    idToName.set(id, String(r.name));
+    ids.push(id);
+  }
+  if (ids.length === 0) return [];
+
+  const [fromEdges, toEdges] = await Promise.all([
+    supabase.from("concept_edges").select("from_concept_id, to_concept_id, relation_type").in("from_concept_id", ids),
+    supabase.from("concept_edges").select("from_concept_id, to_concept_id, relation_type").in("to_concept_id", ids),
+  ]);
+  const seen = new Set<string>();
+  const edgeRows = [...(fromEdges.data ?? []), ...(toEdges.data ?? [])].filter((e) => {
+    const key = `${e.from_concept_id}-${e.to_concept_id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const result: Array<{ from: string; to: string; relationType?: string }> = [];
+  for (const e of edgeRows ?? []) {
+    const fromName = idToName.get(String(e.from_concept_id));
+    const toName = idToName.get(String(e.to_concept_id));
+    if (fromName && toName) {
+      result.push({
+        from: fromName,
+        to: toName,
+        relationType: e.relation_type ?? undefined,
+      });
+    }
+  }
+  return result;
+}
+
+const VERIFICATION_CHECK_IDS = [
+  "coverage",
+  "faithfulness",
+  "prerequisites",
+  "pedagogy",
+  "exam_simulation",
+  "narrative_quality",
+  "engagement_prediction",
+] as const;
+
+/** 自验证结果写入 verification_logs 表，便于审计与后续修复。 */
+export async function writeVerificationLogs(
+  courseId: string,
+  scores: Record<string, number>,
+  passThreshold = 0.85,
+): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+
+  for (const checkType of VERIFICATION_CHECK_IDS) {
+    const score = scores[checkType];
+    if (score === undefined) continue;
+    const passed = score >= passThreshold;
+    await supabase.from("verification_logs").insert({
+      course_id: courseId,
+      check_type: checkType,
+      score,
+      details: null,
+      passed,
+      model_used: null,
+    });
+  }
+}
+
 export async function getSourceRecord(sourceUrl: string) {
   const cached = sourceStore.get(sourceUrl);
   if (cached) {
@@ -402,6 +546,8 @@ export async function createGenerationTask(params: {
     errorMessage: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    progressTotalChapters: null,
+    progressChaptersDone: null,
   };
 
   const supabase = getSupabaseAdminClient();
@@ -433,19 +579,30 @@ export async function createGenerationTask(params: {
 
 export async function updateGenerationTask(
   taskId: string,
-  patch: Partial<Pick<GenerationTaskRecord, "status" | "courseId" | "errorMessage">>,
+  patch: Partial<
+    Pick<
+      GenerationTaskRecord,
+      "status" | "courseId" | "errorMessage" | "progressTotalChapters" | "progressChaptersDone"
+    >
+  >,
 ) {
   const supabase = getSupabaseAdminClient();
 
   if (supabase) {
+    const updatePayload: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (patch.status !== undefined) updatePayload.status = patch.status;
+    if (patch.courseId !== undefined) updatePayload.course_id = patch.courseId;
+    if (patch.errorMessage !== undefined) updatePayload.error_message = patch.errorMessage;
+    if (patch.progressTotalChapters !== undefined)
+      updatePayload.progress_total_chapters = patch.progressTotalChapters;
+    if (patch.progressChaptersDone !== undefined)
+      updatePayload.progress_chapters_done = patch.progressChaptersDone;
+
     const { data, error } = await supabase
       .from("generation_tasks")
-      .update({
-        status: patch.status,
-        course_id: patch.courseId,
-        error_message: patch.errorMessage,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq("id", taskId)
       .select()
       .single();
@@ -512,6 +669,8 @@ export async function createCourseShell(params: {
     estimatedMinutes: params.path.estimatedMinutes,
     qualityScores: null,
     chapters: [],
+    blogHtml: null,
+    podcastUrl: null,
     createdAt: new Date().toISOString(),
     publishedAt: null,
   };
@@ -546,10 +705,122 @@ export async function createCourseShell(params: {
   return course;
 }
 
+/** 骨架课程：插入仅含标题与概念的章节占位，narration 为空，供按需生成。 */
+export async function insertSkeletonChapters(
+  courseId: string,
+  path: LearningPath,
+): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  const rows = path.chapters.map((ch, i) => ({
+    course_id: courseId,
+    order_index: i,
+    title: ch.title,
+    subtitle: null,
+    narration: "",
+    concept_names: ch.concepts.map((c) => c.name),
+    source_citations: [],
+    analogies: null,
+    quiz_questions: null,
+    code_snippets: null,
+    svg_components: null,
+    audio_url: null,
+    audio_duration_seconds: null,
+  }));
+  const { error } = await supabase.from("chapters").insert(rows);
+  if (error) throw error;
+}
+
+/** 从 SourceRecord 还原 ExtractionResult（用于按需章节生成）。 */
+export function buildExtractionFromSource(source: SourceRecord): ExtractionResult | null {
+  if (!source.conceptGraph || source.extractionStatus !== "completed") return null;
+  return {
+    conceptGraph: source.conceptGraph,
+    thinkingChain: source.thinkingChain ?? [],
+    extractionMeta: source.extractionMeta ?? {
+      provider: "mock",
+      model: "",
+      generatedAt: new Date().toISOString(),
+    },
+  };
+}
+
+/** 读取课程的 path_config（用于按需章节生成时取 path.chapters[i]）。 */
+export async function getCoursePathConfig(
+  courseId: string,
+): Promise<LearningPath | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+  const { data } = await supabase
+    .from("courses")
+    .select("path_config")
+    .eq("id", courseId)
+    .single();
+  const raw = data?.path_config;
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const chapters = Array.isArray(obj.chapters)
+    ? (obj.chapters as LearningPathChapter[]).filter(
+        (c): c is LearningPathChapter =>
+          c != null &&
+          typeof c === "object" &&
+          typeof (c as { title?: unknown }).title === "string" &&
+          Array.isArray((c as { concepts?: unknown }).concepts),
+      )
+    : [];
+  return {
+    difficulty: (obj.difficulty as DifficultyLevel) ?? "explorer",
+    estimatedMinutes: typeof obj.estimatedMinutes === "number" ? obj.estimatedMinutes : 0,
+    chapters,
+  };
+}
+
+/** 更新或插入单章（按需生成后写入）。 */
+export async function upsertChapter(
+  courseId: string,
+  chapter: GeneratedChapter,
+): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  const { data: existing } = await supabase
+    .from("chapters")
+    .select("id")
+    .eq("course_id", courseId)
+    .eq("order_index", chapter.orderIndex)
+    .maybeSingle();
+
+  const row = {
+    course_id: courseId,
+    order_index: chapter.orderIndex,
+    title: chapter.title,
+    subtitle: chapter.subtitle ?? null,
+    narration: chapter.narration,
+    concept_names: chapter.conceptNames,
+    source_citations: chapter.sourceCitations ?? [],
+    analogies: chapter.analogies ?? null,
+    quiz_questions: chapter.quizQuestions ?? null,
+    code_snippets: chapter.codeSnippets ?? null,
+    svg_components: chapter.svgComponents ?? null,
+    audio_url: chapter.audioUrl ?? null,
+    audio_duration_seconds: chapter.audioDurationSeconds ?? null,
+  };
+
+  if (existing?.id) {
+    await supabase.from("chapters").update(row).eq("id", existing.id);
+  } else {
+    await supabase.from("chapters").insert(row);
+  }
+
+  courseStore.delete(courseId);
+  await deleteCacheKeys([getCourseCacheKey(courseId)]);
+}
+
 export async function publishCourse(params: {
   courseId: string;
   chapters: GeneratedChapter[];
   qualityScores?: Record<string, number>;
+  blogHtml?: string | null;
+  podcastUrl?: string | null;
 }) {
   const supabase = getSupabaseAdminClient();
   const course =
@@ -572,6 +843,8 @@ export async function publishCourse(params: {
     status: "published",
     qualityScores: params.qualityScores ?? null,
     chapters: params.chapters,
+    blogHtml: params.blogHtml ?? course.blogHtml ?? null,
+    podcastUrl: params.podcastUrl ?? course.podcastUrl ?? null,
     publishedAt: new Date().toISOString(),
   };
 
@@ -582,6 +855,8 @@ export async function publishCourse(params: {
         status: published.status,
         quality_scores: published.qualityScores,
         published_at: published.publishedAt,
+        blog_html: published.blogHtml,
+        podcast_url: published.podcastUrl,
       })
       .eq("id", course.id);
 
@@ -601,6 +876,12 @@ export async function publishCourse(params: {
           narration: chapter.narration,
           concept_names: chapter.conceptNames,
           source_citations: chapter.sourceCitations,
+          analogies: chapter.analogies ?? null,
+          quiz_questions: chapter.quizQuestions ?? null,
+          code_snippets: chapter.codeSnippets ?? null,
+          svg_components: chapter.svgComponents ?? null,
+          audio_url: chapter.audioUrl ?? null,
+          audio_duration_seconds: chapter.audioDurationSeconds ?? null,
         })),
       );
 
@@ -615,7 +896,12 @@ export async function publishCourse(params: {
   const source = await getSourceById(course.sourceId);
   await deleteCacheKeys([
     getCourseCacheKey(course.id),
-    ...(source?.slug ? [getCourseBySlugCacheKey(source.slug)] : []),
+    ...(source?.slug
+      ? [
+          getCourseBySlugCacheKey(source.slug),
+          getCourseBySlugAndDifficultyCacheKey(source.slug, course.difficulty),
+        ]
+      : []),
     ...getPublishedCourseListInvalidationKeys(),
   ]);
 
@@ -695,6 +981,11 @@ export async function getCourseById(courseId: string) {
       sourceCitations: Array.isArray(row.source_citations)
         ? (row.source_citations as string[])
         : [],
+      svgComponents: Array.isArray(row.svg_components) ? (row.svg_components as Record<string, unknown>[]) : undefined,
+      audioUrl: row.audio_url ? String(row.audio_url) : null,
+      analogies: Array.isArray(row.analogies) ? (row.analogies as { concept?: string; analogy: string; limitation?: string }[]) : undefined,
+      quizQuestions: Array.isArray(row.quiz_questions) ? (row.quiz_questions as { type?: string; question: string; options: string[]; correct: string; explanation?: string }[]) : undefined,
+      codeSnippets: Array.isArray(row.code_snippets) ? (row.code_snippets as { language: string; code: string; explanation?: string }[]) : undefined,
     })),
   );
 
@@ -803,6 +1094,93 @@ export async function getCourseBySlug(slug: string): Promise<CourseWithSourceRec
   return result;
 }
 
+function getCourseBySlugAndDifficultyCacheKey(slug: string, difficulty: string) {
+  return `course:slug:${slug}:${difficulty}`;
+}
+
+/** 按 slug + 难度取已发布课程（同一论文三种难度切换）. */
+export async function getCourseBySlugAndDifficulty(
+  slug: string,
+  difficulty: DifficultyLevel,
+): Promise<CourseWithSourceRecord | null> {
+  const cacheKey = getCourseBySlugAndDifficultyCacheKey(slug, difficulty);
+  const redisCached = await getJsonCache<CourseWithSourceRecord>(cacheKey);
+  if (redisCached) {
+    courseStore.set(redisCached.id, redisCached);
+    return redisCached;
+  }
+
+  const supabase = getSupabaseAdminClient();
+  if (supabase) {
+    const { data: sourceRow } = await supabase.from("sources").select("*").eq("slug", slug).single();
+    if (!sourceRow) return null;
+
+    const { data: courseRow } = await supabase
+      .from("courses")
+      .select("*")
+      .eq("source_id", sourceRow.id)
+      .eq("status", "published")
+      .eq("difficulty", difficulty)
+      .order("published_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!courseRow) return null;
+
+    const course = await getCourseById(String(courseRow.id));
+    if (!course) return null;
+
+    const result: CourseWithSourceRecord = {
+      ...course,
+      slug: String(sourceRow.slug),
+      sourceTitle: String(sourceRow.title ?? ""),
+      sourceAbstract: String(sourceRow.abstract ?? ""),
+      sourceUrl: String(sourceRow.url),
+    };
+    await setJsonCache(cacheKey, result, COURSE_CACHE_TTL_SECONDS);
+    return result;
+  }
+
+  const source = Array.from(sourceStore.values()).find((s) => s.slug === slug);
+  if (!source) return null;
+  const course = Array.from(courseStore.values()).find(
+    (c) => c.sourceId === source.id && c.status === "published" && c.difficulty === difficulty,
+  );
+  if (!course) return null;
+  const result: CourseWithSourceRecord = {
+    ...course,
+    slug: source.slug,
+    sourceTitle: source.title,
+    sourceAbstract: source.abstract,
+    sourceUrl: source.url,
+  };
+  await setJsonCache(cacheKey, result, COURSE_CACHE_TTL_SECONDS);
+  return result;
+}
+
+/** 返回某 slug 下已发布课程的难度列表（用于难度切换器）. */
+export async function getPublishedDifficultiesBySlug(
+  slug: string,
+): Promise<DifficultyLevel[]> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return [];
+
+  const { data: sourceRow } = await supabase.from("sources").select("id").eq("slug", slug).single();
+  if (!sourceRow) return [];
+
+  const { data: rows } = await supabase
+    .from("courses")
+    .select("difficulty")
+    .eq("source_id", sourceRow.id)
+    .eq("status", "published");
+
+  const set = new Set<string>();
+  for (const r of rows ?? []) {
+    if (r.difficulty) set.add(r.difficulty);
+  }
+  return Array.from(set) as DifficultyLevel[];
+}
+
 export async function listPublishedCourses(limit = 12): Promise<CourseListItem[]> {
   const redisCached = await getJsonCache<CourseListItem[]>(getPublishedCoursesCacheKey(limit));
   if (redisCached) {
@@ -883,6 +1261,109 @@ export async function listPublishedCourses(limit = 12): Promise<CourseListItem[]
     COURSE_LIST_CACHE_TTL_SECONDS,
   );
   return result;
+}
+
+/** 热门课程：按 view_count 降序，其次 published_at */
+export async function listTrendingCourses(limit = 12): Promise<CourseListItem[]> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    return listPublishedCourses(limit);
+  }
+  const { data: courseRows } = await supabase
+    .from("courses")
+    .select("*")
+    .eq("status", "published")
+    .order("view_count", { ascending: false, nullsFirst: false })
+    .order("published_at", { ascending: false })
+    .limit(limit);
+
+  const rows = courseRows ?? [];
+  const items = await Promise.all(
+    rows.map(async (courseRow) => {
+      const { data: sourceRow } = await supabase
+        .from("sources")
+        .select("slug, title, abstract")
+        .eq("id", String(courseRow.source_id))
+        .single();
+
+      return {
+        id: String(courseRow.id),
+        slug: String(sourceRow?.slug ?? ""),
+        title: String(sourceRow?.title ?? "Untitled course"),
+        abstract: String(sourceRow?.abstract ?? ""),
+        difficulty: courseRow.difficulty as DifficultyLevel,
+        status: courseRow.status as CourseStatus,
+        totalChapters:
+          typeof courseRow.total_chapters === "number"
+            ? courseRow.total_chapters
+            : Number(courseRow.total_chapters ?? 0),
+        estimatedMinutes:
+          typeof courseRow.estimated_minutes === "number"
+            ? courseRow.estimated_minutes
+            : Number(courseRow.estimated_minutes ?? 0),
+        publishedAt: courseRow.published_at ? String(courseRow.published_at) : null,
+      };
+    }),
+  );
+  return items.filter((item) => item.slug);
+}
+
+/** 全文搜索：按 source 的 title / abstract / slug 匹配 */
+export async function searchCourses(q: string, limit = 24): Promise<CourseListItem[]> {
+  const trimmed = q.trim();
+  if (!trimmed) return [];
+
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return [];
+
+  const escaped = trimmed.replace(/"/g, '""');
+  const pattern = `"%${escaped}%"`;
+  const { data: sourceRows } = await supabase
+    .from("sources")
+    .select("id")
+    .or(`title.ilike.${pattern},abstract.ilike.${pattern},slug.ilike.${pattern}`)
+    .limit(100);
+
+  const sourceIds = (sourceRows ?? []).map((r) => String(r.id));
+  if (sourceIds.length === 0) return [];
+
+  const { data: courseRows } = await supabase
+    .from("courses")
+    .select("*")
+    .eq("status", "published")
+    .in("source_id", sourceIds)
+    .order("published_at", { ascending: false })
+    .limit(limit);
+
+  const rows = courseRows ?? [];
+  const items = await Promise.all(
+    rows.map(async (courseRow) => {
+      const { data: sourceRow } = await supabase
+        .from("sources")
+        .select("slug, title, abstract")
+        .eq("id", String(courseRow.source_id))
+        .single();
+
+      return {
+        id: String(courseRow.id),
+        slug: String(sourceRow?.slug ?? ""),
+        title: String(sourceRow?.title ?? "Untitled course"),
+        abstract: String(sourceRow?.abstract ?? ""),
+        difficulty: courseRow.difficulty as DifficultyLevel,
+        status: courseRow.status as CourseStatus,
+        totalChapters:
+          typeof courseRow.total_chapters === "number"
+            ? courseRow.total_chapters
+            : Number(courseRow.total_chapters ?? 0),
+        estimatedMinutes:
+          typeof courseRow.estimated_minutes === "number"
+            ? courseRow.estimated_minutes
+            : Number(courseRow.estimated_minutes ?? 0),
+        publishedAt: courseRow.published_at ? String(courseRow.published_at) : null,
+      };
+    }),
+  );
+  return items.filter((item) => item.slug);
 }
 
 export async function upsertAppUser(params: {
@@ -1093,6 +1574,27 @@ export async function getUserSubscription(userId: string): Promise<AppSubscripti
   return subscription;
 }
 
+/** 用户取消订阅：将当前有效订阅设为周期末取消，并清除缓存。返回取消前的订阅信息（用于埋点）。 */
+export async function setSubscriptionCancelAtPeriodEnd(
+  userId: string,
+): Promise<AppSubscriptionRecord | null> {
+  const sub = await getUserSubscription(userId);
+  if (!sub) return null;
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+  const { error } = await supabase
+    .from("subscriptions")
+    .update({
+      cancel_at_period_end: true,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId)
+    .in("status", ["active", "trialing"]);
+  if (error) return null;
+  subscriptionStore.delete(userId);
+  return sub;
+}
+
 export async function updateUserStripeCustomerId(userId: string, stripeCustomerId: string) {
   const supabase = getSupabaseAdminClient();
   const user = await getAppUserById(userId);
@@ -1261,11 +1763,65 @@ export async function markSubscriptionStatus(
   return null;
 }
 
+export interface UsdtPaymentRequestRecord {
+  id: string;
+  userId: string;
+  plan: string;
+  amountUsdt: string | null;
+  txHash: string | null;
+  status: string;
+  createdAt: string;
+}
+
+function toUsdtPaymentRequestRecord(row: Record<string, unknown>): UsdtPaymentRequestRecord {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    plan: String(row.plan ?? ""),
+    amountUsdt: row.amount_usdt != null ? String(row.amount_usdt) : null,
+    txHash: row.tx_hash != null ? String(row.tx_hash) : null,
+    status: String(row.status ?? "pending"),
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  };
+}
+
+/** 联盟营销：注册时若存在 referrer_id，写入 referral_stats 待后续付费时更新为 paid。 */
+export async function insertReferralStat(
+  referrerId: string,
+  referredUserId: string,
+): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  await supabase.from("referral_stats").insert({
+    referrer_id: referrerId,
+    referred_user_id: referredUserId,
+    status: "pending",
+  });
+}
+
+/** USDT 开通订阅后，将该用户作为被推荐人的 referral_stats 更新为 paid。 */
+export async function updateReferralStatsPaid(
+  referredUserId: string,
+  subscriptionId: string,
+  commissionAmount?: number | null,
+): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  await supabase
+    .from("referral_stats")
+    .update({
+      subscription_id: subscriptionId,
+      commission_amount: commissionAmount ?? null,
+      status: "paid",
+    })
+    .eq("referred_user_id", referredUserId)
+    .eq("status", "pending");
+}
+
 export async function createUsdtPaymentRequest(params: {
   userId: string;
   plan: string;
-  amountUsdt?: string | null;
-  txHash?: string | null;
+  amountUsdt: string;
 }) {
   const supabase = getSupabaseAdminClient();
   const id = randomUUID();
@@ -1274,13 +1830,116 @@ export async function createUsdtPaymentRequest(params: {
       id,
       user_id: params.userId,
       plan: params.plan,
-      amount_usdt: params.amountUsdt ?? null,
-      tx_hash: params.txHash ?? null,
+      amount_usdt: params.amountUsdt,
+      tx_hash: null,
       status: "pending",
     });
     if (error) throw error;
   }
   return { id };
+}
+
+export async function getUsdtPaymentRequestById(
+  id: string,
+): Promise<UsdtPaymentRequestRecord | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("usdt_payment_requests")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return null;
+  return toUsdtPaymentRequestRecord(data);
+}
+
+export async function listUsdtPaymentRequestsByUserId(
+  userId: string,
+): Promise<UsdtPaymentRequestRecord[]> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("usdt_payment_requests")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return data.map(toUsdtPaymentRequestRecord);
+}
+
+export async function updateUsdtPaymentRequestTxHash(
+  id: string,
+  txHash: string,
+): Promise<UsdtPaymentRequestRecord | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("usdt_payment_requests")
+    .update({ tx_hash: txHash })
+    .eq("id", id)
+    .eq("status", "pending")
+    .select()
+    .single();
+  if (error || !data) return null;
+  return toUsdtPaymentRequestRecord(data);
+}
+
+/** Map USDT plan to subscription plan and period months */
+function usdtPlanToSubscription(plan: string): { plan: "pro" | "team"; months: number } {
+  if (plan === "team") return { plan: "team", months: 1 };
+  if (plan === "pro-yearly") return { plan: "pro", months: 12 };
+  return { plan: "pro", months: 1 };
+}
+
+export async function approveUsdtPaymentRequest(
+  paymentRequestId: string,
+): Promise<AppSubscriptionRecord | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+
+  const req = await getUsdtPaymentRequestById(paymentRequestId);
+  if (!req || req.status !== "pending") return null;
+
+  const { plan: subPlan, months } = usdtPlanToSubscription(req.plan);
+  const now = new Date();
+  const periodEnd = new Date(now);
+  periodEnd.setMonth(periodEnd.getMonth() + months);
+
+  const { error: updateReqError } = await supabase
+    .from("usdt_payment_requests")
+    .update({ status: "confirmed" })
+    .eq("id", paymentRequestId);
+
+  if (updateReqError) throw updateReqError;
+
+  await supabase
+    .from("subscriptions")
+    .update({ status: "expired" })
+    .eq("user_id", req.userId)
+    .in("status", ["active", "trialing"]);
+
+  const newId = randomUUID();
+  const { data: subData, error: insertError } = await supabase
+    .from("subscriptions")
+    .insert({
+      id: newId,
+      user_id: req.userId,
+      stripe_subscription_id: null,
+      payment_request_id: paymentRequestId,
+      plan: subPlan,
+      status: "active",
+      current_period_start: now.toISOString(),
+      current_period_end: periodEnd.toISOString(),
+      cancel_at_period_end: false,
+    })
+    .select()
+    .single();
+
+  if (insertError) throw insertError;
+  await updateReferralStatsPaid(req.userId, newId);
+  const subscription = toSubscriptionRecord(subData);
+  subscriptionStore.set(subscription.userId, subscription);
+  return subscription;
 }
 
 export async function getOrCreateUsageQuota(userId: string, period: string) {
@@ -1735,11 +2394,134 @@ export async function getDashboardSummary(userId: string): Promise<DashboardSumm
     )
   ).filter((course): course is CourseListItem => Boolean(course));
 
+  const completedDates = new Set<string>();
+  for (const p of allProgress) {
+    if (p.status === "completed" && p.completedAt) {
+      const d = new Date(p.completedAt);
+      completedDates.add(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`);
+    }
+  }
+
+  const toDateKey = (date: Date) =>
+    `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+  const today = new Date();
+  const todayKey = toDateKey(today);
+  const yesterday = new Date(today);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const yesterdayKey = toDateKey(yesterday);
+
+  let currentStreak = 0;
+  let start: Date;
+  if (completedDates.has(todayKey)) {
+    start = new Date(today);
+  } else if (completedDates.has(yesterdayKey)) {
+    start = new Date(yesterday);
+  } else {
+    start = new Date(0);
+  }
+  if (start.getTime() > 0) {
+    let check = new Date(start);
+    while (completedDates.has(toDateKey(check))) {
+      currentStreak++;
+      check.setUTCDate(check.getUTCDate() - 1);
+    }
+  }
+
+  const completedChapterIds = allProgress
+    .filter((p) => p.status === "completed")
+    .map((p) => p.chapterId);
+  let masteredConcepts: string[] = [];
+  let masteredConceptEdges: Array<{ from: string; to: string; relationType?: string }> = [];
+  if (supabase && completedChapterIds.length > 0) {
+    const { data: chapterConceptRows } = await supabase
+      .from("chapters")
+      .select("concept_names")
+      .in("id", completedChapterIds);
+    const nameSet = new Set<string>();
+    for (const row of chapterConceptRows ?? []) {
+      const names = Array.isArray(row?.concept_names) ? (row.concept_names as string[]) : [];
+      names.forEach((n) => nameSet.add(String(n)));
+    }
+    masteredConcepts = [...nameSet];
+    if (masteredConcepts.length > 0) {
+      masteredConceptEdges = await getGlobalConceptEdges(masteredConcepts);
+    }
+  }
+
   return {
     completedChapters,
     inProgressCourses,
     favoritesCount: favorites.length,
-    currentStreak: 0,
+    currentStreak,
     recentCourses,
+    masteredConcepts,
+    masteredConceptEdges,
   };
+}
+
+export async function createShortVideoExport(params: {
+  courseId: string;
+  userId: string;
+}): Promise<ShortVideoExportRecord> {
+  const supabase = getSupabaseAdminClient();
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  const record: ShortVideoExportRecord = {
+    id,
+    courseId: params.courseId,
+    userId: params.userId,
+    status: "queued",
+    fileUrl: null,
+    errorMessage: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  if (supabase) {
+    await supabase.from("short_video_exports").insert({
+      id: record.id,
+      course_id: record.courseId,
+      user_id: record.userId,
+      status: record.status,
+      file_url: record.fileUrl,
+      error_message: record.errorMessage,
+      updated_at: record.updatedAt,
+    });
+  }
+  return record;
+}
+
+export async function getShortVideoExportById(
+  id: string,
+): Promise<ShortVideoExportRecord | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("short_video_exports")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    id: String(data.id),
+    courseId: String(data.course_id),
+    userId: String(data.user_id),
+    status: data.status as ShortVideoExportRecord["status"],
+    fileUrl: data.file_url ? String(data.file_url) : null,
+    errorMessage: data.error_message ? String(data.error_message) : null,
+    createdAt: String(data.created_at),
+    updatedAt: String(data.updated_at),
+  };
+}
+
+export async function updateShortVideoExport(
+  id: string,
+  patch: Partial<Pick<ShortVideoExportRecord, "status" | "fileUrl" | "errorMessage">>,
+): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.status !== undefined) payload.status = patch.status;
+  if (patch.fileUrl !== undefined) payload.file_url = patch.fileUrl;
+  if (patch.errorMessage !== undefined) payload.error_message = patch.errorMessage;
+  await supabase.from("short_video_exports").update(payload).eq("id", id);
 }

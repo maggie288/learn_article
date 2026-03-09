@@ -1,11 +1,9 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { hasAnyLlmKey, unifiedChat } from "@/lib/llm/unified-llm";
 import { serverEnv } from "@/lib/env";
 import type { ConceptEdge, ConceptNode, ExtractionResult, SourceDocument } from "@/lib/engine/types";
 
-const MODEL_NAME = "claude-sonnet-4-20250514";
-
 const SYSTEM_PROMPT = `
-你是一位资深科学教育家。请阅读论文内容，输出严格 JSON：
+你是一位资深科学教育家。请阅读论文内容，直接输出结构化结果；不要解释推理过程。只输出 JSON，不要 markdown 包裹或解释。
 {
   "concepts": [
     {
@@ -90,46 +88,32 @@ function safeParseJson(content: string) {
 export async function extractPaperInsights(
   document: SourceDocument,
 ): Promise<ExtractionResult> {
-  if (!serverEnv.ANTHROPIC_API_KEY) {
+  if (!hasAnyLlmKey()) {
     return createMockExtraction(document);
   }
 
-  const client = new Anthropic({
-    apiKey: serverEnv.ANTHROPIC_API_KEY,
-  });
+  const userPayload = JSON.stringify(
+    {
+      title: document.metadata.title,
+      abstract: document.metadata.abstract,
+      sections: document.sections.slice(0, 12),
+    },
+    null,
+    2,
+  );
 
-  const response = await client.messages.create({
-    model: MODEL_NAME,
-    max_tokens: 4000,
-    temperature: 0.1,
+  const result = await unifiedChat({
     system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                title: document.metadata.title,
-                abstract: document.metadata.abstract,
-                sections: document.sections.slice(0, 12),
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      },
-    ],
+    user: userPayload,
+    maxTokens: 4000,
+    temperature: 0.1,
   });
 
-  const text = response.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
+  if (!result) {
+    return createMockExtraction(document);
+  }
 
-  const parsed = safeParseJson(text) as {
+  const parsed = safeParseJson(result.text) as {
     concepts: ConceptNode[];
     edges: ConceptEdge[];
     externalPrerequisites?: string[];
@@ -144,8 +128,8 @@ export async function extractPaperInsights(
     },
     thinkingChain: parsed.thinkingChain,
     extractionMeta: {
-      provider: "anthropic",
-      model: MODEL_NAME,
+      provider: result.provider,
+      model: result.model,
       generatedAt: new Date().toISOString(),
     },
   };

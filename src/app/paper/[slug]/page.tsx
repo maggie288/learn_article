@@ -4,13 +4,19 @@ import { notFound } from "next/navigation";
 import { getAuthContext } from "@/lib/auth/session";
 import { sanitizeNarration } from "@/lib/utils/narration";
 import { FavoriteToggleButton } from "@/components/course/favorite-toggle-button";
+import { DifficultySwitcher } from "@/components/course/difficulty-switcher";
 import { ShareBar } from "@/components/share/share-bar";
-import { getCourseBySlug, isFavoriteCourse } from "@/lib/db/repositories";
+import {
+  getCourseBySlug,
+  getCourseBySlugAndDifficulty,
+  getPublishedDifficultiesBySlug,
+  isFavoriteCourse,
+} from "@/lib/db/repositories";
+import type { DifficultyLevel } from "@/lib/engine/types";
 
 interface PaperPageProps {
-  params: Promise<{
-    slug: string;
-  }>;
+  params: Promise<{ slug: string }>;
+  searchParams?: Promise<{ difficulty?: string }>;
 }
 
 export async function generateMetadata({
@@ -42,21 +48,35 @@ export async function generateMetadata({
   };
 }
 
-export default async function PaperPage({ params }: PaperPageProps) {
-  const { slug } = await params;
-  const course = await getCourseBySlug(slug);
-  const authContext = await getAuthContext();
+const VALID_DIFFICULTIES: DifficultyLevel[] = ["explorer", "builder", "researcher"];
 
-  if (!course) {
+export default async function PaperPage({ params, searchParams }: PaperPageProps) {
+  const { slug } = await params;
+  const sp = await searchParams;
+  const difficultyParam = sp?.difficulty;
+  const difficulty: DifficultyLevel | undefined =
+    difficultyParam && VALID_DIFFICULTIES.includes(difficultyParam as DifficultyLevel)
+      ? (difficultyParam as DifficultyLevel)
+      : undefined;
+
+  const course = difficulty
+    ? await getCourseBySlugAndDifficulty(slug, difficulty)
+    : await getCourseBySlug(slug);
+  const authContext = await getAuthContext();
+  const availableDifficulties = await getPublishedDifficultiesBySlug(slug);
+
+  const displayCourse = course ?? (await getCourseBySlug(slug));
+  if (!displayCourse) {
     notFound();
   }
+  const effectiveCourse = course ?? displayCourse;
 
   const favorited =
     authContext.isAuthenticated && authContext.userId
-      ? await isFavoriteCourse(authContext.userId, course.id)
+      ? await isFavoriteCourse(authContext.userId, effectiveCourse.id)
       : false;
 
-  const totalChapters = course.totalChapters ?? course.chapters.length;
+  const totalChapters = effectiveCourse.totalChapters ?? effectiveCourse.chapters.length;
 
   return (
     <main className="min-h-screen font-reading">
@@ -66,21 +86,42 @@ export default async function PaperPage({ params }: PaperPageProps) {
         style={{ paddingBottom: "18px" }}
       >
         <div className="mx-auto max-w-reading">
-          <span className="mb-3 inline-block rounded border border-cyan-500/25 bg-cyan-500/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-cyan-400">
-            Course · {course.difficulty}
-          </span>
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <span className="rounded border border-cyan-500/25 bg-cyan-500/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-cyan-400">
+              Course · {effectiveCourse.difficulty}
+            </span>
+            <DifficultySwitcher
+              slug={slug}
+              currentDifficulty={effectiveCourse.difficulty}
+              availableDifficulties={availableDifficulties}
+            />
+          </div>
           <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-            {course.sourceTitle || slug}
+            {effectiveCourse.sourceTitle || slug}
           </h1>
           <p className="mt-1.5 text-sm italic text-slate-500">
-            {course.sourceAbstract || "Abstract pending."}
+            {effectiveCourse.sourceAbstract || "Abstract pending."}
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-400">
             <span>{totalChapters} chapters</span>
             <span className="text-white/30">·</span>
-            <span>Status: {course.status}</span>
+            <span>Status: {effectiveCourse.status}</span>
+            <Link
+              href={`/paper/${slug}/blog`}
+              className="text-cyan-400 hover:text-cyan-300"
+            >
+              Blog
+            </Link>
+            <span className="text-white/30">·</span>
+            <Link
+              href={`/paper/${slug}/podcast`}
+              className="text-cyan-400 hover:text-cyan-300"
+            >
+              Podcast
+            </Link>
+            <span className="text-white/30">·</span>
             <a
-              href={course.sourceUrl}
+              href={effectiveCourse.sourceUrl}
               rel="noreferrer"
               target="_blank"
               className="text-cyan-400 hover:text-cyan-300"
@@ -90,12 +131,12 @@ export default async function PaperPage({ params }: PaperPageProps) {
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <ShareBar
-              courseId={course.id}
+              courseId={effectiveCourse.id}
               shareUrl={`/paper/${slug}`}
-              title={course.sourceTitle ?? undefined}
+              title={effectiveCourse.sourceTitle ?? undefined}
             />
             {authContext.isAuthenticated ? (
-              <FavoriteToggleButton courseId={course.id} initialFavorited={favorited} />
+              <FavoriteToggleButton courseId={effectiveCourse.id} initialFavorited={favorited} />
             ) : null}
           </div>
         </div>
@@ -105,12 +146,16 @@ export default async function PaperPage({ params }: PaperPageProps) {
       <div className="mx-auto max-w-reading px-5 py-8 sm:px-6 sm:py-10">
         <h2 className="mb-5 text-lg font-semibold text-white">Chapters</h2>
         <div className="flex flex-col gap-3">
-          {course.chapters.map((chapter) => (
+          {effectiveCourse.chapters.map((chapter) => (
             <Link
-              key={`${course.id}-${chapter.orderIndex}`}
+              key={`${effectiveCourse.id}-${chapter.orderIndex}`}
               className="group rounded-xl border border-white/[0.06] bg-white/[0.02] py-4 pl-5 pr-5 transition hover:border-cyan-500/20 hover:bg-cyan-500/[0.04] sm:py-5 sm:pl-6"
               style={{ borderLeftWidth: "3px", borderLeftColor: "rgba(6, 182, 212, 0.35)" }}
-              href={`/paper/${slug}/chapter/${chapter.orderIndex}`}
+              href={
+                difficulty
+                  ? `/paper/${slug}/chapter/${chapter.orderIndex}?difficulty=${difficulty}`
+                  : `/paper/${slug}/chapter/${chapter.orderIndex}`
+              }
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">

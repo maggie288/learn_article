@@ -1,10 +1,12 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
+import { captureServerEvent } from "@/lib/analytics/server";
 import {
   createAppUserWithPassword,
   getAppUserByEmail,
   getPasswordHashByUserId,
+  insertReferralStat,
 } from "@/lib/db/repositories";
 import { cookies } from "next/headers";
 
@@ -72,11 +74,19 @@ export async function registerWithEmail(
   const ref = cookieStore.get(REFERRAL_COOKIE)?.value;
   const referrerId = ref && UUID_REGEX.test(ref) ? ref : null;
   const hash = await bcrypt.hash(password, 12);
-  await createAppUserWithPassword({
+  const user = await createAppUserWithPassword({
     email,
     name: name || null,
     passwordHash: hash,
     referrerId,
   });
+  if (referrerId && user?.id) {
+    await insertReferralStat(referrerId, user.id);
+    await captureServerEvent({
+      distinctId: user.id,
+      event: "referral_signup",
+      properties: { referrerId },
+    });
+  }
   return { error: null };
 }

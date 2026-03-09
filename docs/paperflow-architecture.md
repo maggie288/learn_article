@@ -79,21 +79,23 @@ PaperFlow 是 AI 驱动的论文与代码深度学习引擎：**录入论文/代
 
 ### 1.7 商业模式与定价
 
+**收费方式**：订阅以 **USDT** 收取；定价以美元标价，实际支付时按约定汇率或固定 USDT 数量收取。
+
 ```
 ┌─────────────────────────────────────────────────────┐
 │                  Free（免费层）                       │
 │  每月 3 篇课程 · 仅 Explorer 难度 · 无音频下载       │
 ├─────────────────────────────────────────────────────┤
-│              Pro（$19/月 或 $149/年）                 │
+│              Pro（$19/月 或 $149/年，收 USDT）         │
 │  无限课程 · 三种难度 · 播客音频下载                   │
 │  学习进度追踪 · 优先生成队列 · 收藏夹                │
 ├─────────────────────────────────────────────────────┤
-│            Team（$14/人/月，最低 3 人）               │
+│            Team（$14/人/月，最低 3 人，收 USDT）      │
 │  Pro 全部功能 + 团队课程库共享                        │
 │  协作笔记 · 团队学习仪表盘 · 管理后台                │
 ├─────────────────────────────────────────────────────┤
 │                  API（按量计费）                      │
-│  $2/篇课程生成 · 可嵌入到其他产品中                   │
+│  $2/篇课程生成 · 可嵌入到其他产品中（收 USDT）        │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -101,7 +103,7 @@ PaperFlow 是 AI 驱动的论文与代码深度学习引擎：**录入论文/代
 
 ```
 单篇课程生成成本：
-├── Claude API (提取+6 Agent+验证) ≈ $0.30-0.80
+├── LLM API (Claude / MiniMax，提取+6 Agent+验证) ≈ $0.30-0.80（视策略与用量）
 ├── TTS 音频生成 (ElevenLabs)      ≈ $0.10-0.20
 ├── 存储和 CDN                      ≈ $0.01
 └── 总计                            ≈ $0.40-1.00
@@ -113,7 +115,8 @@ Pro 用户月均生成 8-15 篇课程
 
 成本优化手段：
 ├── 缓存热门论文（同一篇论文不重复生成）→ 成本降 60%+
-├── Sonnet 为主力而非 Opus → 成本降 50%
+├── LLM 双 Key（Claude + MiniMax）自动选「最便宜」或「最先返回」→ 成本/延迟优化
+├── Sonnet / MiniMax M2 为主力而非 Opus → 成本降 50%
 └── 自建/开源 TTS → 成本趋近于零
 ```
 
@@ -183,7 +186,7 @@ Pro 用户月均生成 8-15 篇课程
          │
          │ 若路径生成等必须用 Python
          ▼
-┌─────────────────┐    外部 API：Anthropic / OpenAI / ElevenLabs / Stripe
+┌─────────────────┐    外部 API：Anthropic / MiniMax / OpenAI / ElevenLabs
 │  Railway        │
 │  单容器 Python   │
 │  (可选)         │
@@ -212,12 +215,24 @@ Pro 用户月均生成 8-15 篇课程
 |------|------|
 | 框架 | Next.js API Routes；可选独立 FastAPI 跑 Python 引擎逻辑 |
 | 语言 | TypeScript (API Routes) + Python (引擎核心，可选) |
-| LLM | Claude API (claude-sonnet-4-20250514) 主力，OpenAI GPT-4o 备用 |
+| LLM | Claude API (claude-sonnet-4-20250514) + MiniMax (M2-her)；双 Key 时自动选「最先返回」或「最便宜」，见 3.2.1 |
 | 数据库 | PostgreSQL (Supabase) |
 | 缓存 | Redis (Upstash) |
 | 异步任务 | Inngest（任务编排，与 Vercel 深度集成） |
 | 文件存储 | Supabase Storage / Cloudflare R2 |
 | 部署 | Vercel 全栈优先；仅必要时 Railway 跑 Python |
+
+#### 3.2.1 LLM 多 Provider 与双 Key 策略
+
+引擎层通过统一 LLM 封装（`src/lib/llm/unified-llm.ts`）同时支持 **Claude (Anthropic)** 与 **MiniMax**。配置两个 Key 时，由环境变量 `LLM_STRATEGY` 决定行为：
+
+| 策略 | 说明 |
+|------|------|
+| `first`（默认） | 并发请求所有已配置的 Provider，**采用最先成功返回**的结果，降低延迟。 |
+| `cheapest` | 仅用当前配置中预估**成本最低**的 Provider（默认 MiniMax 权重低于 Claude）；若该 Provider 失败则回退到另一个。 |
+
+- **环境变量**：`ANTHROPIC_API_KEY`、`MINIMAX_API_KEY` 至少配置一个；`LLM_STRATEGY=first|cheapest` 可选。
+- **使用处**：Layer 2 深度提取、Layer 4 各 Agent（如 Narrator）、以及所有 `callLlmJson` 调用均经统一层，返回结果中会带上实际使用的 `provider`（如 `extractionMeta.provider`）。
 
 ### 3.3 第三方服务
 
@@ -226,11 +241,13 @@ Pro 用户月均生成 8-15 篇课程
 | PDF 解析 | pdf.js + Mathpix（数学公式 OCR） |
 | 代码分析 | tree-sitter（AST 解析） |
 | TTS/语音 | ElevenLabs 或 Play.ht（正式环境），见 3.4 |
-| 支付 | Stripe（Checkout + Webhook + Customer Portal） |
-| 认证 | Clerk |
+| 支付 | USDT（加密货币支付：创建支付请求 → 用户转账 → 提交 tx_hash → 人工/自动核对后开通订阅） |
+| 认证 | 自研邮件注册/登录（邮箱 + 密码，password_hash 存库，可选邮件验证码） |
 | 监控 | Sentry（错误追踪） + PostHog（产品分析 + 埋点） |
 | 邮件 | Resend（事务邮件 + Newsletter） |
 | DNS/CDN | Cloudflare（免费）或 Vercel 自带 |
+
+**认证流程**：注册（邮箱 + 密码 → 写入 `users` 表并存储 `password_hash`，可选邮箱验证）；登录（校验密码 → 签发 session，如 JWT 或服务端 session + cookie）；受保护路由通过 middleware 或 API 内校验 session 获取 `userId`。可选：忘记密码（邮件重置链接）、邮箱验证码登录。
 
 ### 3.4 Narration 与语音方案
 
@@ -302,7 +319,7 @@ Pro 用户月均生成 8-15 篇课程
 - 敏感信息不写进日志
 
 **安全与限流**
-- Stripe/Inngest/Supabase Webhook 用签名/密钥校验
+- Inngest/Supabase Webhook 用签名/密钥校验；USDT 支付请求需校验用户身份与金额
 - 生产环境关闭调试接口
 - 「生成课程 / 导出短视频」等重接口做**按用户限流**（Upstash Redis），防止滥用拉高 LLM/TTS 成本
 
@@ -336,7 +353,7 @@ Pro 用户月均生成 8-15 篇课程
 
 **Launch 前必须就绪**
 - 落地页：价值主张 + Demo 视频 + 邮件收集（早鸟/等待列表）
-- Stripe 支付集成并测试
+- USDT 支付流程并测试（创建支付请求、提交 tx_hash、核对开通）
 - OG Image 自动生成
 - 至少 5 篇预生成的高质量示例课程
 - 健康检查与基础监控
@@ -353,12 +370,13 @@ Pro 用户月均生成 8-15 篇课程
 CREATE TABLE users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT UNIQUE NOT NULL,
+  password_hash TEXT,                            -- 自研邮件登录：bcrypt 等哈希
   name TEXT,
   avatar_url TEXT,
   knowledge_level TEXT DEFAULT 'explorer',       -- explorer | builder | researcher
   preferred_language TEXT DEFAULT 'zh-CN',
   referrer_id UUID REFERENCES users(id),         -- 联盟推荐人
-  stripe_customer_id TEXT UNIQUE,                -- Stripe 客户 ID
+  email_verified_at TIMESTAMPTZ,                 -- 邮箱验证时间（可选）
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -366,15 +384,27 @@ CREATE TABLE users (
 CREATE TABLE subscriptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES users(id) NOT NULL,
-  stripe_subscription_id TEXT UNIQUE NOT NULL,
   plan TEXT NOT NULL,                            -- free | pro | team
-  status TEXT NOT NULL,                          -- active | canceled | past_due | trialing
+  status TEXT NOT NULL,                          -- active | canceled | expired
   current_period_start TIMESTAMPTZ,
   current_period_end TIMESTAMPTZ,
-  cancel_at_period_end BOOLEAN DEFAULT false,
+  payment_request_id UUID,                       -- 关联 usdt_payment_requests（最近一次开通）
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- USDT 支付请求：用户提交转账信息，人工/自动核对后开通订阅
+CREATE TABLE usdt_payment_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) NOT NULL,
+  plan TEXT NOT NULL,
+  amount_usdt TEXT,
+  tx_hash TEXT,                                  -- 链上交易哈希
+  status TEXT NOT NULL DEFAULT 'pending',        -- pending | confirmed | rejected
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_usdt_payment_requests_user_id ON usdt_payment_requests(user_id);
+CREATE INDEX idx_usdt_payment_requests_status ON usdt_payment_requests(status);
 
 -- 免费用户月度使用量追踪
 CREATE TABLE usage_quotas (
@@ -536,6 +566,8 @@ CREATE TABLE analytics_events (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 ```
+
+**订阅与支付说明**：订阅由 USDT 支付请求确认后开通；`subscriptions.payment_request_id` 可关联 `usdt_payment_requests.id`。定价仍以美元标价，实际以 USDT 收取（按约定汇率或固定 USDT 数量）。
 
 ### 5.2 索引策略
 
@@ -1122,6 +1154,12 @@ GET    /api/courses/search?q=              全文搜索
 === 源分析 ===
 POST   /api/sources/analyze                预分析源内容（返回概念图谱）
 
+=== 认证（自研邮件） ===
+POST   /api/auth/register                  注册（邮箱 + 密码）
+POST   /api/auth/login                     登录（邮箱 + 密码，返回 session）
+POST   /api/auth/logout                    登出
+GET    /api/auth/session                   当前登录用户（校验 session）
+
 === 用户 ===
 GET    /api/user/profile                   当前用户资料
 PATCH  /api/user/profile                   更新资料（知识水平、语言等）
@@ -1130,9 +1168,10 @@ GET    /api/user/achievements              成就列表
 GET    /api/user/favorites                 收藏课程
 
 === 支付 ===
-POST   /api/stripe/create-checkout         创建 Stripe Checkout Session
-POST   /api/stripe/create-portal           创建 Customer Portal Session
-POST   /api/stripe/webhook                 Stripe Webhook（签名校验）
+POST   /api/payment/usdt/request           创建 USDT 支付请求（返回金额、收款地址、订单号）
+POST   /api/payment/usdt/confirm            用户提交 tx_hash 确认转账
+GET    /api/payment/usdt/requests          当前用户支付请求列表（含状态）
+（管理端）POST /api/payment/usdt/approve   人工核对后确认开通订阅
 
 === SEO 与增长 ===
 GET    /paper/[slug]/opengraph-image       动态 og:image
@@ -1182,7 +1221,7 @@ interface GenerateCourseResponse {
 | 课程查看 | 前 2 章无限；第 3 章起须登录 | 可选 |
 | 测验提交 | 30 次/小时 | 必须登录 |
 | 短视频导出 | Pro: 5 次/天 | 必须登录 + Pro |
-| Stripe Webhook | 签名校验 | Stripe 签名 |
+| USDT 支付确认/管理 | 校验登录与权限 | 必须登录（管理端需管理员） |
 | 公开页面 | 无限 | 无 |
 
 ---
@@ -1309,29 +1348,28 @@ interface AppStore {
 实现规则：
 ├── 门控在 API 层实现，前端仅做 UI 引导
 ├── Free 用户月度用量通过 usage_quotas 表追踪
-├── 订阅状态通过 Stripe Webhook 实时同步到 subscriptions 表
+├── 订阅状态在 USDT 支付请求被确认后写入/更新 subscriptions 表
 └── 前端根据 subscription.plan 决定 UI 展示（显示/隐藏/灰色按钮）
 ```
 
-### 9.2 Stripe 集成
+### 9.2 USDT 支付集成
 
 ```
 流程：
-├── 用户点击 Subscribe → 调用 /api/stripe/create-checkout
-├── Stripe Checkout 页面完成支付
-├── Stripe 发送 Webhook → /api/stripe/webhook
-│   ├── checkout.session.completed → 创建 subscription 记录
-│   ├── customer.subscription.updated → 更新 subscription 状态
-│   ├── customer.subscription.deleted → 标记 canceled
-│   └── invoice.payment_failed → 标记 past_due
-├── 用户管理订阅 → 调用 /api/stripe/create-portal → 跳转 Stripe Portal
-└── Webhook 必须验证签名（STRIPE_WEBHOOK_SECRET）
+├── 用户点击 Subscribe → 调用 /api/payment/usdt/request
+├── 后端创建 usdt_payment_requests 记录，返回：收款地址、应付 USDT 数量、订单号
+├── 用户向指定地址转账 USDT，取得 tx_hash
+├── 用户在前端提交 tx_hash → 调用 /api/payment/usdt/confirm
+├── 人工核对（或接入链上查询）→ 确认到账后调用 /api/payment/usdt/approve
+│   → 更新 usdt_payment_requests.status = 'confirmed'
+│   → 创建或更新 subscriptions（plan、current_period_start/end、payment_request_id）
+└── 用户可在设置页查看「我的订阅」与「支付记录」
 
 开发注意：
-├── 本地测试用 Stripe CLI 转发 Webhook
-├── 幂等处理：同一事件可能发送多次
-├── 先写库再返回 200，不先返回再异步写库
-└── stripe_customer_id 存在 users 表，一个用户一个 customer
+├── 金额与收款地址、链（如 TRC20/ERC20）由环境变量配置
+├── 幂等：同一 payment_request 只可确认一次
+├── 可选：接入链上 API 自动校验 tx_hash 到账后再自动 approve
+└── 定价页展示美元等价与应付 USDT（按约定汇率或固定数量）
 ```
 
 ### 9.3 缓存策略
@@ -1379,7 +1417,7 @@ Week 1: 项目骨架 + Layer 1–3
 - [ ] 项目初始化（Next.js + Supabase + Tailwind + Shadcn）
 - [ ] 数据库 Schema 创建（全部表 + 索引）
 - [ ] 环境变量配置 + 健康检查端点
-- [ ] Clerk 认证集成
+- [ ] 自研邮件注册/登录（注册、登录、password_hash、session）
 - [ ] 论文 PDF 获取和解析（Layer 1: pdf.js + Mathpix）
 - [ ] 概念图谱提取（Layer 2: Claude API）
 - [ ] 思维链重建（Layer 2）
@@ -1422,11 +1460,11 @@ Week 4: 多形态 + 发现
 
 ```
 Week 5: 支付与门控
-- [ ] Stripe 集成（Checkout + Webhook + Customer Portal）
+- [ ] USDT 支付流程（创建请求、展示收款信息、提交 tx_hash、人工/自动核对）
 - [ ] 付费门控全流程（API 层 + 前端 UI）
 - [ ] 免费用户月度配额（usage_quotas）
-- [ ] 定价页
-- [ ] 订阅管理页（设置 → Stripe Portal）
+- [ ] 定价页（美元标价 + USDT 应付金额）
+- [ ] 订阅管理页（设置 → 我的订阅与支付记录）
 
 Week 6: SEO + 分享 + 埋点
 - [ ] 动态 og:image 生成（Vercel OG）
@@ -1517,10 +1555,12 @@ paperflow/
 │   │   │   │   ├── [id]/progress/route.ts
 │   │   │   │   └── [id]/favorite/route.ts
 │   │   │   ├── sources/analyze/route.ts
-│   │   │   ├── stripe/
-│   │   │   │   ├── create-checkout/route.ts
-│   │   │   │   ├── create-portal/route.ts
-│   │   │   │   └── webhook/route.ts
+│   │   │   ├── payment/
+│   │   │   │   ├── usdt/
+│   │   │   │   │   ├── request/route.ts    # 创建支付请求
+│   │   │   │   │   ├── confirm/route.ts    # 提交 tx_hash
+│   │   │   │   │   ├── requests/route.ts   # 用户支付记录
+│   │   │   │   │   └── approve/route.ts    # 管理端确认开通
 │   │   │   ├── user/
 │   │   │   │   ├── profile/route.ts
 │   │   │   │   ├── dashboard/route.ts
@@ -1528,7 +1568,7 @@ paperflow/
 │   │   │   ├── health/route.ts
 │   │   │   └── inngest/route.ts       # Inngest handler
 │   │   ├── sitemap.ts                 # 动态 sitemap
-│   │   └── layout.tsx                 # 根 layout（Clerk Provider + PostHog）
+│   │   └── layout.tsx                 # 根 layout（Session/Auth Provider + PostHog）
 │   ├── components/
 │   │   ├── course/                    # CoursePlayer, ChapterView, etc.
 │   │   ├── blog/                      # BlogView, ArticleBody, etc.
@@ -1564,7 +1604,7 @@ paperflow/
 │   │   │   ├── auto-fix.ts
 │   │   │   └── pipeline.ts
 │   │   ├── db/                        # Supabase 客户端 + 查询
-│   │   ├── stripe/                    # Stripe 集成
+│   │   ├── payment/                   # USDT 支付集成
 │   │   ├── tts/                       # TTS 集成（ElevenLabs）
 │   │   ├── analytics/                 # PostHog 封装
 │   │   ├── cache/                     # Redis 缓存封装
@@ -1595,8 +1635,10 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 
-# LLM
+# LLM（至少配置一个；双 Key 时见 3.2.1 策略）
 ANTHROPIC_API_KEY=
+MINIMAX_API_KEY=
+LLM_STRATEGY=                 # 可选：first（默认，最先返回）| cheapest（最便宜优先）
 OPENAI_API_KEY=
 
 # 认证
@@ -1652,7 +1694,7 @@ ENGINE_PYTHON_URL=
 ### 12.2 API 开发规范
 
 - 所有 API 路由统一返回 `ApiResponse<T>` 格式
-- 认证检查用 Clerk middleware，在路由内获取 userId
+- 认证检查用自研 session middleware（或 Supabase Auth），在路由内获取 userId
 - 数据库操作用 Supabase SDK，不写原生 SQL（迁移文件除外）
 - 长任务投递到 Inngest，API 立即返回 taskId
 - 每个 API 路由开头做参数校验（Zod）
@@ -1683,7 +1725,7 @@ ENGINE_PYTHON_URL=
 | 竞品快速复制 | 失去先发优势 | 知识图谱数据飞轮 + 自验证质量壁垒 |
 | TTS 音质差 | 播客/短视频体验差 | 正式环境强制 ElevenLabs；博客不做音频 |
 | Launch 当天宕机 | 口碑损失 | 健康检查 + Sentry 报警 + Vercel 自动扩容 |
-| Stripe 集成出错 | 收不到钱/重复扣款 | Webhook 幂等处理 + 本地 Stripe CLI 测试 |
+| USDT 支付确认延迟/失败 | 用户已转账未开通 | 人工核对流程 + 可选链上 API 自动校验；幂等 approve |
 
 ---
 
@@ -1700,11 +1742,11 @@ AI 驱动的论文/代码学习引擎。录入 URL，由核心生成引擎产出
 ## 技术栈
 - Next.js 14 App Router + TypeScript（严格模式）
 - Supabase (PostgreSQL + Auth + Storage)
-- Claude API (主力 LLM)
+- Claude API + MiniMax（双 Key 时自动选最先返回或最便宜）
 - Inngest (异步任务编排)
 - Tailwind + Shadcn/ui
-- Stripe (支付)
-- Clerk (认证)
+- USDT 支付（自建流程：请求 → 转账 → 提交 tx_hash → 核对开通）
+- 自研邮件注册/登录（邮箱 + 密码，password_hash）
 - PostHog (埋点)
 - ElevenLabs (TTS)
 - Upstash Redis (缓存/限流)
@@ -1731,7 +1773,7 @@ AI 驱动的论文/代码学习引擎。录入 URL，由核心生成引擎产出
 - src/lib/engine/ — 核心生成引擎（Layer 1-3, 6）
 - src/lib/agents/ — 各 Agent 的 prompt 和调用（Layer 4）
 - src/lib/verification/ — 自验证管线（Layer 5）
-- src/lib/stripe/ — 支付集成
+- src/lib/payment/ — USDT 支付集成
 - src/lib/tts/ — TTS 集成
 - src/lib/analytics/ — PostHog 封装
 - src/lib/cache/ — Redis 缓存
@@ -1740,3 +1782,53 @@ AI 驱动的论文/代码学习引擎。录入 URL，由核心生成引擎产出
 - src/components/ — React 组件（按功能分目录）
 - supabase/migrations/ — 数据库迁移
 ```
+
+
+## 引擎效率优化（MiniMax 理念）
+
+### Agent 分级调度策略
+
+| Agent | 推荐模型 | 原因 | 预估 token |
+|-------|---------|------|-----------|
+| Deep Extraction | Claude Sonnet | 需要深度理解 | ~3000 |
+| Path Generator | 算法（无 LLM） | 拓扑排序，纯算法 | 0 |
+| Narrator | Claude Sonnet | 叙事质量是核心 | ~2000/章 |
+| Analogist | Claude Haiku / MiniMax M2.5 | 结构化任务 | ~500/章 |
+| Visualizer | Claude Haiku / MiniMax M2.5 | JSON 描述输出 | ~400/章 |
+| Examiner | MiniMax M2.5 / GPT-4o-mini | 出题是模板化的 | ~300/章 |
+| Connector | 向量搜索 + 小模型 | 查图谱不需要大模型 | ~200 |
+| Verifier | Claude Sonnet（仅关键关卡） | 验证需要判断力 | ~1500 |
+
+### 三级生成策略（懒加载）
+
+第一级：骨架生成（<2 秒，~800 token）
+→ 用快速模型生成：课程标题、章节列表、每章核心概念
+→ 用户立刻看到课程结构
+→ 成本：约 $0.01
+
+第二级：按需章节生成（3-5 秒/章，~2500 token/章）
+→ 用户点开某一章时才触发生成
+→ 调 Sonnet 生成完整叙事 + 可视化
+→ 成本：约 $0.05/章
+
+第三级：深度内容（用户主动请求）
+→ "深入这个概念" → 调 Sonnet 生成专家级解释
+→ "看原文" → 展示论文对应段落
+→ 成本：约 $0.03/次
+
+总效果：
+├── 如果用户只浏览骨架 → 成本 $0.01
+├── 如果学完 4 章 → 成本 $0.21
+├── 如果学完全部 10 章 → 成本 $0.51
+└── 对比原方案（全量预生成）→ 成本 $0.80-1.50
+
+节省 50-70% 的 API 成本，同时用户体验更好（即时反馈）。
+
+### 思维链压缩指令
+
+在所有 Agent 的 system prompt 中加入：
+"直接输出结构化结果。不要解释你的推理过程。
+不要使用'让我思考一下''首先我注意到'等过渡语。
+如果输出是 JSON，只输出 JSON，不加任何 markdown 包裹或解释。"
+
+预估效果：每个 Agent 的 output token 减少 40-60%。

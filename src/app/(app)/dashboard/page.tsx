@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getAuthContext } from "@/lib/auth/session";
 import { getDashboardSummary } from "@/lib/db/repositories";
+import { ConceptMap } from "@/components/dashboard/concept-map";
 import { DashboardAchievements } from "@/components/dashboard/dashboard-achievements";
 
 export default async function DashboardPage() {
@@ -48,6 +49,11 @@ export default async function DashboardPage() {
       </div>
 
       <DashboardAchievements />
+
+      <ConceptMap
+        concepts={summary.masteredConcepts}
+        edges={summary.masteredConceptEdges}
+      />
 
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-4">

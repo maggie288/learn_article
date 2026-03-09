@@ -32,6 +32,8 @@ export interface CourseRecord {
   estimatedMinutes: number | null;
   qualityScores: Record<string, number> | null;
   chapters: GeneratedChapter[];
+  blogHtml: string | null;
+  podcastUrl: string | null;
   createdAt: string;
   publishedAt: string | null;
 }
@@ -46,6 +48,10 @@ export interface GenerationTaskRecord {
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  /** 总章节数（生成 outline 后设置），用于逐章进度展示 */
+  progressTotalChapters: number | null;
+  /** 已完成章节数 */
+  progressChaptersDone: number | null;
 }
 
 export interface CourseWithSourceRecord extends CourseRecord {
@@ -121,10 +127,31 @@ export interface FavoriteRecord {
   createdAt: string;
 }
 
+export interface ShortVideoExportRecord {
+  id: string;
+  courseId: string;
+  userId: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  fileUrl: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MasteredConceptEdge {
+  from: string;
+  to: string;
+  relationType?: string;
+}
+
 export interface DashboardSummary {
   completedChapters: number;
   inProgressCourses: number;
   favoritesCount: number;
   currentStreak: number;
   recentCourses: CourseListItem[];
+  /** 已掌握概念（来自已完成章节的 concept_names） */
+  masteredConcepts: string[];
+  /** 已掌握概念之间的边（用于概念图谱可视化） */
+  masteredConceptEdges: MasteredConceptEdge[];
 }

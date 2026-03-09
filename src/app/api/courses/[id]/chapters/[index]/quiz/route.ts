@@ -4,8 +4,10 @@ import { getAuthContext } from "@/lib/auth/session";
 import { captureServerEvent } from "@/lib/analytics/server";
 import {
   ensureCourseCompletedAchievement,
+  getCourseById,
   upsertCourseProgress,
 } from "@/lib/db/repositories";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { err, ok } from "@/lib/types/api";
 
 const quizSchema = z.object({
@@ -20,12 +22,44 @@ interface QuizRouteProps {
   }>;
 }
 
+/** 根据章节 quizQuestions 与用户 answers 计算得分（正确数/总题数）。 */
+function computeQuizScore(
+  questions: Array<{ options: string[]; correct: string }>,
+  answers: (string | number)[],
+): number {
+  if (questions.length === 0 || answers.length !== questions.length) {
+    return 0;
+  }
+  let correct = 0;
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    const a = answers[i];
+    const selected =
+      typeof a === "number"
+        ? q.options[a]
+        : String(a);
+    if (selected === q.correct) correct++;
+  }
+  return correct / questions.length;
+}
+
 export async function POST(request: Request, { params }: QuizRouteProps) {
   const authContext = await getAuthContext();
   if (!authContext.isAuthenticated || !authContext.userId) {
     return NextResponse.json(err("UNAUTHORIZED", "Please sign in first."), {
       status: 401,
     });
+  }
+
+  const quizLimit = await checkRateLimit(
+    `quiz:${authContext.userId}`,
+    30,
+  );
+  if (!quizLimit.allowed) {
+    return NextResponse.json(
+      err("RATE_LIMITED", "Quiz submissions limited to 30 per hour.", quizLimit),
+      { status: 429 },
+    );
   }
 
   const { id: courseId, index } = await params;
@@ -46,8 +80,25 @@ export async function POST(request: Request, { params }: QuizRouteProps) {
     );
   }
 
-  const { answers, score } = parsed.data;
-  const quizScore = score ?? (answers.length > 0 ? 0 : null);
+  const { answers, score: clientScore } = parsed.data;
+  let quizScore: number | null = clientScore ?? null;
+
+  if (answers.length > 0) {
+    const course = await getCourseById(courseId);
+    const chapter = course?.chapters[chapterIndex];
+    const questions = chapter?.quizQuestions;
+    if (Array.isArray(questions) && questions.length > 0) {
+      quizScore = computeQuizScore(
+        questions as Array<{ options: string[]; correct: string }>,
+        answers,
+      );
+    } else if (quizScore === null) {
+      quizScore = 0;
+    }
+  }
+  if (quizScore === null && answers.length > 0) {
+    quizScore = 0;
+  }
 
   const record = await upsertCourseProgress({
     userId: authContext.userId,
@@ -55,7 +106,7 @@ export async function POST(request: Request, { params }: QuizRouteProps) {
     chapterIndex,
     status: "completed",
     quizScore: quizScore ?? undefined,
-    quizAnswers: answers,
+    quizAnswers: answers as unknown,
   });
 
   await captureServerEvent({

@@ -1,6 +1,7 @@
 import { getAuthContext } from "@/lib/auth/session";
 import { ManageSubscriptionButton } from "@/components/settings/manage-subscription-button";
 import { ProfileForm } from "@/components/settings/profile-form";
+import { UsdtPaymentHistory } from "@/components/settings/usdt-payment-history";
 
 interface SettingsPageProps {
   searchParams: Promise<{
@@ -68,6 +69,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
             </div>
           </div>
           <ManageSubscriptionButton />
+          <UsdtPaymentHistory />
         </>
       ) : null}
     </section>

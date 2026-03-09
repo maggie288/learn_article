@@ -11,7 +11,8 @@ export type CourseStatus =
   | "verifying"
   | "fixing"
   | "published"
-  | "failed";
+  | "failed"
+  | "skeleton";
 
 export interface PaperMetadata {
   title: string;
@@ -69,7 +70,7 @@ export interface ExtractionResult {
   };
   thinkingChain: ThinkingStep[];
   extractionMeta: {
-    provider: "anthropic" | "mock";
+    provider: "anthropic" | "minimax" | "mock";
     model: string;
     generatedAt: string;
   };
@@ -87,6 +88,29 @@ export interface LearningPath {
   chapters: LearningPathChapter[];
 }
 
+/** 测验题（Examiner Agent 产出） */
+export interface QuizQuestion {
+  type?: string;
+  question: string;
+  options: string[];
+  correct: string;
+  explanation?: string;
+}
+
+/** 类比项（Analogist Agent 产出） */
+export interface AnalogyItem {
+  concept?: string;
+  analogy: string;
+  limitation?: string;
+}
+
+/** 代码片段（Coder Agent 产出） */
+export interface CodeSnippet {
+  language: string;
+  code: string;
+  explanation?: string;
+}
+
 export interface GeneratedChapter {
   orderIndex: number;
   title: string;
@@ -94,6 +118,18 @@ export interface GeneratedChapter {
   narration: string;
   conceptNames: string[];
   sourceCitations: string[];
+  /** SVG 描述或 markup（Visualizer Agent） */
+  svgComponents?: string[] | Record<string, unknown>[];
+  /** 类比列表（Analogist Agent） */
+  analogies?: AnalogyItem[];
+  /** 测验题（Examiner Agent） */
+  quizQuestions?: QuizQuestion[];
+  /** 代码片段（Coder Agent，Builder/Researcher） */
+  codeSnippets?: CodeSnippet[] | null;
+  /** URL to chapter audio (when TTS pipeline is used). */
+  audioUrl?: string | null;
+  /** Duration in seconds (when TTS pipeline is used). */
+  audioDurationSeconds?: number | null;
 }
 
 export interface CourseTaskPayload {
@@ -101,4 +137,6 @@ export interface CourseTaskPayload {
   sourceUrl: string;
   difficulty: DifficultyLevel;
   language: string;
+  /** 为 true 时仅跑骨架生成（第一级），不生成章节正文 */
+  skeleton?: boolean;
 }

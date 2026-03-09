@@ -11,7 +11,7 @@ import {
   getAuthContext,
   isQuotaExceeded,
 } from "@/lib/auth/session";
-import { normalizePaperUrl } from "@/lib/engine/ingestion/paper";
+import { normalizeSourceUrl } from "@/lib/engine/ingestion/paper";
 import { dispatchCourseGeneration } from "@/lib/inngest/dispatch";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { err, ok } from "@/lib/types/api";
@@ -20,6 +20,8 @@ const generateCourseSchema = z.object({
   sourceUrl: z.string().url(),
   difficulty: z.enum(["explorer", "builder", "researcher"]).default("explorer"),
   language: z.string().default("zh-CN"),
+  /** 为 true 时仅生成骨架（标题+章节列表+概念），不生成正文，用户按需生成本章 */
+  skeleton: z.boolean().optional().default(false),
 });
 
 export async function POST(request: Request) {
@@ -75,7 +77,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const normalizedSourceUrl = normalizePaperUrl(parsed.data.sourceUrl).sourceUrl;
+  const normalizedSourceUrl = normalizeSourceUrl(parsed.data.sourceUrl).sourceUrl;
   const publishedCourse = await findPublishedCourseBySourceUrlAndDifficulty(
     normalizedSourceUrl,
     parsed.data.difficulty,
@@ -117,8 +119,9 @@ export async function POST(request: Request) {
   await consumeGenerationQuota(authContext.userId);
 
   const task = await createGenerationTask({
-    ...parsed.data,
     sourceUrl: normalizedSourceUrl,
+    difficulty: parsed.data.difficulty,
+    language: parsed.data.language,
   });
 
   await dispatchCourseGeneration({
@@ -126,6 +129,7 @@ export async function POST(request: Request) {
     sourceUrl: normalizedSourceUrl,
     difficulty: parsed.data.difficulty,
     language: parsed.data.language,
+    skeleton: parsed.data.skeleton,
   });
 
   return NextResponse.json(
@@ -135,6 +139,7 @@ export async function POST(request: Request) {
       status: task.status,
       estimatedMinutes: null,
       cacheHit: false,
+      skeleton: parsed.data.skeleton,
     }),
     { status: 202 },
   );
