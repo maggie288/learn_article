@@ -7,6 +7,10 @@ import {
 import type { CourseTaskPayload } from "@/lib/engine/types";
 import type { ShortVideoExportPayload } from "@/lib/inngest/short-video-export";
 
+/**
+ * 仅负责触发：有 Inngest 时发事件，无时在进程内后台跑（本地开发用）。
+ * 整课生成重逻辑在 Inngest 分步执行，接口只做「触发 + 轮询状态」。
+ */
 export async function dispatchCourseGeneration(payload: CourseTaskPayload) {
   if (isInngestConfigured()) {
     await inngest.send({

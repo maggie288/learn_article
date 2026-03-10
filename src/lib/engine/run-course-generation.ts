@@ -66,6 +66,149 @@ export async function runCourseGenerationSkeleton(payload: CourseTaskPayload) {
   };
 }
 
+/**
+ * 整课生成 - 阶段 1：拉取、提取、路径、建壳、插入骨架章节。
+ * 幂等：若任务已有 courseId 且课程为 skeleton，直接返回，便于「继续上次未完成」。
+ */
+export async function runCourseGenerationPhase1(payload: CourseTaskPayload): Promise<{
+  taskId: string;
+  courseId: string;
+  totalChapters: number;
+}> {
+  const { getGenerationTask, getCourseById } = await import("@/lib/db/repositories");
+  const existingTask = await getGenerationTask(payload.taskId);
+  if (existingTask?.courseId) {
+    const course = await getCourseById(existingTask.courseId);
+    if (course?.status === "skeleton" && course.chapters.length > 0) {
+      await updateGenerationTask(payload.taskId, { status: "generating" });
+      return {
+        taskId: payload.taskId,
+        courseId: existingTask.courseId,
+        totalChapters: course.totalChapters ?? course.chapters.length,
+      };
+    }
+  }
+
+  await updateGenerationTask(payload.taskId, { status: "extracting" });
+
+  const sourceDocument = await ingestFromUrl(payload.sourceUrl);
+  const sourceRecord = await upsertSourceDocument(sourceDocument);
+
+  const extraction = await extractPaperInsights(sourceDocument);
+  await saveExtractionResult(payload.sourceUrl, extraction);
+
+  await updateGenerationTask(payload.taskId, { status: "generating" });
+
+  const path = generateLearningPath(extraction, payload.difficulty);
+  const course = await createCourseShell({
+    sourceId: sourceRecord.id,
+    difficulty: payload.difficulty,
+    language: payload.language,
+    path,
+  });
+
+  await insertSkeletonChapters(course.id, path);
+  await updateCourseStatus(course.id, "skeleton");
+  await updateGenerationTask(payload.taskId, {
+    progressTotalChapters: path.chapters.length,
+    courseId: course.id,
+  });
+
+  return {
+    taskId: payload.taskId,
+    courseId: course.id,
+    totalChapters: path.chapters.length,
+  };
+}
+
+/**
+ * 整课生成 - 最终阶段：校验、修图、TTS、发布。
+ * 供 Inngest 分步执行，在「逐章生成」全部完成后调用。
+ */
+export async function runCourseGenerationPhaseFinal(
+  payload: CourseTaskPayload,
+  courseId: string,
+): Promise<{ taskId: string; courseId: string }> {
+  const startedAt = Date.now();
+  const { getCourseById, getSourceById, buildExtractionFromSource } = await import("@/lib/db/repositories");
+  const course = await getCourseById(courseId);
+  if (!course || course.chapters.length === 0) {
+    throw new Error(`Course ${courseId} not found or has no chapters`);
+  }
+
+  const source = await getSourceById(course.sourceId);
+  if (!source) throw new Error(`Source for course ${courseId} not found`);
+  const extraction = buildExtractionFromSource(source);
+  if (!extraction) throw new Error(`Extraction for course ${courseId} not found`);
+
+  await updateCourseStatus(courseId, "verifying");
+
+  let currentChapters = course.chapters;
+  let verification = await runVerificationPipeline(currentChapters, extraction);
+  const maxVerifyAttempts = 2;
+
+  for (let attempt = 1; attempt < maxVerifyAttempts && !verification.allPassed; attempt++) {
+    await updateCourseStatus(courseId, "fixing");
+    currentChapters = autoFixFailedChapters(
+      currentChapters,
+      verification.failedChecks,
+      extraction,
+    ) as typeof course.chapters;
+    verification = await runVerificationPipeline(currentChapters, extraction);
+  }
+
+  const audioResults = await generateCourseAudio(
+    courseId,
+    currentChapters.map((ch) => ({ orderIndex: ch.orderIndex, narration: ch.narration })),
+  );
+  const audioMap = new Map(
+    audioResults.map((r) => [r.orderIndex, { url: r.audioUrl, duration: r.durationSeconds }]),
+  );
+  const chaptersWithAudio = currentChapters.map((ch) => ({
+    ...ch,
+    audioUrl: audioMap.get(ch.orderIndex)?.url ?? null,
+    audioDurationSeconds: audioMap.get(ch.orderIndex)?.duration ?? null,
+  }));
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+  const hasAnyAudio = chaptersWithAudio.some((ch) => ch.audioUrl);
+  const podcastUrl =
+    hasAnyAudio && appUrl ? `${appUrl}/api/courses/${courseId}/podcast/rss` : null;
+
+  const blogHtml = renderBlogFromChapters(chaptersWithAudio, {
+    courseTitle: source.title ?? undefined,
+    language: payload.language,
+  });
+
+  const published = await publishCourse({
+    courseId,
+    chapters: chaptersWithAudio,
+    qualityScores: verification.scores,
+    blogHtml,
+    podcastUrl,
+  });
+
+  await writeVerificationLogs(published.id, verification.scores);
+  await updateGlobalConceptGraph(extraction.conceptGraph);
+  await updateGenerationTask(payload.taskId, {
+    status: published.status,
+    courseId: published.id,
+  });
+
+  await captureServerEvent({
+    distinctId: payload.taskId,
+    event: "course_generated",
+    properties: {
+      sourceUrl: payload.sourceUrl,
+      difficulty: payload.difficulty,
+      generationTime: Date.now() - startedAt,
+      courseId: published.id,
+    },
+  });
+
+  return { taskId: payload.taskId, courseId: published.id };
+}
+
 export async function runCourseGeneration(payload: CourseTaskPayload) {
   const startedAt = Date.now();
   await updateGenerationTask(payload.taskId, {

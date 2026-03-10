@@ -4,6 +4,8 @@ import {
   createGenerationTask,
   findActiveGenerationTask,
   findPublishedCourseBySourceUrlAndDifficulty,
+  getGenerationTask,
+  updateGenerationTask,
 } from "@/lib/db/repositories";
 import {
   canGenerateWithPlan,
@@ -17,12 +19,16 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { err, ok } from "@/lib/types/api";
 
 const generateCourseSchema = z.object({
-  sourceUrl: z.string().url(),
+  sourceUrl: z.string().url().optional(),
   difficulty: z.enum(["explorer", "builder", "researcher"]).default("explorer"),
   language: z.string().default("zh-CN"),
   /** 为 true 时仅生成骨架（标题+章节列表+概念），不生成正文，用户按需生成本章 */
   skeleton: z.boolean().optional().default(false),
+  /** 继续上次未完成的任务：传 taskId，将从中断处继续生成，不扣配额 */
+  resumeTaskId: z.string().uuid().optional(),
 });
+
+const RESUMABLE_STATUSES = ["extracting", "generating", "skeleton", "verifying", "fixing", "failed"] as const;
 
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
@@ -49,6 +55,61 @@ export async function POST(request: Request) {
       err("UNAUTHORIZED", "You must sign in before generating a course."),
       { status: 401 },
     );
+  }
+
+  // 继续未完成的任务：不扣配额，仅重新派发 Inngest，从已有骨架逐章补全
+  if (parsed.data.resumeTaskId) {
+    const task = await getGenerationTask(parsed.data.resumeTaskId);
+    if (!task) {
+      return NextResponse.json(err("NOT_FOUND", "Task not found"), { status: 404 });
+    }
+    if (task.status === "published") {
+      return NextResponse.json(
+        ok({
+          taskId: task.id,
+          courseId: task.courseId,
+          status: task.status,
+          estimatedMinutes: null,
+          cacheHit: true,
+        }),
+        { status: 200 },
+      );
+    }
+    if (!RESUMABLE_STATUSES.includes(task.status as (typeof RESUMABLE_STATUSES)[number])) {
+      return NextResponse.json(
+        err("INVALID_STATE", "Task cannot be resumed (only extracting/generating/skeleton/failed can be resumed)"),
+        { status: 400 },
+      );
+    }
+    if (!task.courseId) {
+      return NextResponse.json(
+        err("INVALID_STATE", "Task has no course yet; wait for phase1 or retry without resumeTaskId"),
+        { status: 400 },
+      );
+    }
+    await updateGenerationTask(task.id, { status: "generating", errorMessage: null });
+    await dispatchCourseGeneration({
+      taskId: task.id,
+      sourceUrl: task.sourceUrl,
+      difficulty: task.difficulty,
+      language: task.language,
+      skeleton: false,
+    });
+    return NextResponse.json(
+      ok({
+        taskId: task.id,
+        courseId: task.courseId,
+        status: "generating",
+        estimatedMinutes: null,
+        cacheHit: false,
+        resumed: true,
+      }),
+      { status: 202 },
+    );
+  }
+
+  if (!parsed.data.sourceUrl) {
+    return NextResponse.json(err("INVALID_REQUEST", "sourceUrl is required for new generation"), { status: 400 });
   }
 
   if (!canGenerateWithPlan(authContext.plan, parsed.data.difficulty)) {
@@ -124,6 +185,7 @@ export async function POST(request: Request) {
     language: parsed.data.language,
   });
 
+  // 仅触发后台任务，不执行生成逻辑；整课生成在 Inngest 分步执行，客户端轮询 /api/courses/status/:taskId
   await dispatchCourseGeneration({
     taskId: task.id,
     sourceUrl: normalizedSourceUrl,
