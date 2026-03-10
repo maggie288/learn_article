@@ -2,6 +2,9 @@
   "functions": {
     "app/api/**/*.ts": {
       "maxDuration": 60
+    },
+    "app/api/inngest/route.ts": {
+      "maxDuration": 10
     }
   }
 }

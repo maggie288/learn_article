@@ -5,8 +5,8 @@ import {
   shortVideoExportFunction,
 } from "@/lib/inngest/functions";
 
-/** Inngest 回调需在超时内完成握手/确认 */
-export const maxDuration = 30;
+/** Vercel 免费套餐单次调用约 10s；每步拆小以适配，超时后可用「继续生成」续跑 */
+export const maxDuration = 10;
 
 export const { GET, POST, PUT } = serve({
   client: inngest,

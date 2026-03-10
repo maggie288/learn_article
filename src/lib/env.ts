@@ -42,6 +42,11 @@ const envSchema = z.object({
   NEXT_PUBLIC_POSTHOG_HOST: optionalUrl,
   INNGEST_EVENT_KEY: z.string().optional(),
   INNGEST_SIGNING_KEY: z.string().optional(),
+  /** 为 true 时 narrator 步骤发到自建 worker，主应用用 waitForEvent 等结果 */
+  INNGEST_USE_WORKER: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
   ENGINE_PYTHON_URL: optionalUrl,
   ELEVENLABS_API_KEY: z.string().optional(),
   /** Mathpix 数学公式 OCR（Layer 1 可选）：PDF 中公式转 LaTeX */
@@ -82,6 +87,7 @@ export const serverEnv = envSchema.parse({
   NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
   INNGEST_EVENT_KEY: process.env.INNGEST_EVENT_KEY,
   INNGEST_SIGNING_KEY: process.env.INNGEST_SIGNING_KEY,
+  INNGEST_USE_WORKER: process.env.INNGEST_USE_WORKER,
   ENGINE_PYTHON_URL: process.env.ENGINE_PYTHON_URL,
   ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
   MATHPIX_APP_ID: process.env.MATHPIX_APP_ID,

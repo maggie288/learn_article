@@ -674,6 +674,47 @@ export async function getGenerationTask(taskId: string) {
   return task;
 }
 
+/** Worker 写入 narrator 结果；主应用轮询后取走 */
+export async function setNarratorDraft(
+  courseId: string,
+  chapterIndex: number,
+  narratorBase: Record<string, unknown>,
+): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  await supabase.from("generation_chapter_drafts").upsert(
+    {
+      course_id: courseId,
+      chapter_index: chapterIndex,
+      narrator_base: narratorBase,
+      created_at: new Date().toISOString(),
+    },
+    { onConflict: "course_id,chapter_index" },
+  );
+}
+
+/** 取走并删除 draft，供主应用 step 轮询 */
+export async function takeNarratorDraft(
+  courseId: string,
+  chapterIndex: number,
+): Promise<Record<string, unknown> | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+  const { data } = await supabase
+    .from("generation_chapter_drafts")
+    .select("narrator_base")
+    .eq("course_id", courseId)
+    .eq("chapter_index", chapterIndex)
+    .maybeSingle();
+  if (!data?.narrator_base) return null;
+  await supabase
+    .from("generation_chapter_drafts")
+    .delete()
+    .eq("course_id", courseId)
+    .eq("chapter_index", chapterIndex);
+  return data.narrator_base as Record<string, unknown>;
+}
+
 export async function createCourseShell(params: {
   sourceId: string;
   difficulty: DifficultyLevel;

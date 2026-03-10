@@ -8,6 +8,7 @@ import { visualizerAgent } from "@/lib/agents/visualizer";
 import { captureServerEvent } from "@/lib/analytics/server";
 import {
   createCourseShell,
+  getSourceById,
   getSourceRecord,
   insertSkeletonChapters,
   publishCourse,
@@ -114,6 +115,96 @@ export async function runCourseGenerationPhase1(payload: CourseTaskPayload): Pro
     courseId: course.id,
   });
 
+  return {
+    taskId: payload.taskId,
+    courseId: course.id,
+    totalChapters: path.chapters.length,
+  };
+}
+
+/** 阶段 1 拆步（适配 Vercel 10s 超时）：仅拉取并落库 source */
+export async function runCourseGenerationPhase1Ingest(payload: CourseTaskPayload): Promise<{
+  taskId: string;
+  sourceUrl: string;
+  sourceId: string;
+}> {
+  const { getGenerationTask, getCourseById } = await import("@/lib/db/repositories");
+  const existingTask = await getGenerationTask(payload.taskId);
+  if (existingTask?.courseId) {
+    const course = await getCourseById(existingTask.courseId);
+    if (course?.status === "skeleton" && course.chapters.length > 0) {
+      const source = await getSourceById(course.sourceId);
+      if (source) {
+        await updateGenerationTask(payload.taskId, { status: "generating" });
+        return {
+          taskId: payload.taskId,
+          sourceUrl: payload.sourceUrl,
+          sourceId: source.id,
+        };
+      }
+    }
+  }
+
+  await updateGenerationTask(payload.taskId, { status: "extracting" });
+  const sourceDocument = await ingestFromUrl(payload.sourceUrl);
+  const sourceRecord = await upsertSourceDocument(sourceDocument);
+  return {
+    taskId: payload.taskId,
+    sourceUrl: payload.sourceUrl,
+    sourceId: sourceRecord.id,
+  };
+}
+
+/** 阶段 1 拆步：仅提取并落库 extraction */
+export async function runCourseGenerationPhase1Extract(
+  payload: CourseTaskPayload,
+  sourceId: string,
+): Promise<{ taskId: string; sourceUrl: string; sourceId: string }> {
+  const source = await getSourceById(sourceId);
+  if (!source?.rawContent) throw new Error(`Source ${sourceId} has no rawContent`);
+  const extraction = await extractPaperInsights(source.rawContent);
+  await saveExtractionResult(payload.sourceUrl, extraction);
+  await updateGenerationTask(payload.taskId, { status: "generating" });
+  return { taskId: payload.taskId, sourceUrl: payload.sourceUrl, sourceId };
+}
+
+/** 阶段 1 拆步：路径 + 建壳 + 骨架章节。幂等：若任务已有 skeleton 课程则直接返回 */
+export async function runCourseGenerationPhase1PathShell(
+  payload: CourseTaskPayload,
+  sourceId: string,
+): Promise<{ taskId: string; courseId: string; totalChapters: number }> {
+  const { getGenerationTask, getCourseById, buildExtractionFromSource } = await import("@/lib/db/repositories");
+  const existingTask = await getGenerationTask(payload.taskId);
+  if (existingTask?.courseId) {
+    const course = await getCourseById(existingTask.courseId);
+    if (course?.status === "skeleton" && course.chapters.length > 0) {
+      await updateGenerationTask(payload.taskId, { status: "generating" });
+      return {
+        taskId: payload.taskId,
+        courseId: existingTask.courseId,
+        totalChapters: course.totalChapters ?? course.chapters.length,
+      };
+    }
+  }
+
+  const source = await getSourceById(sourceId);
+  if (!source) throw new Error(`Source ${sourceId} not found`);
+  const extraction = buildExtractionFromSource(source);
+  if (!extraction) throw new Error(`Extraction for source ${sourceId} not found`);
+
+  const path = generateLearningPath(extraction, payload.difficulty);
+  const course = await createCourseShell({
+    sourceId,
+    difficulty: payload.difficulty,
+    language: payload.language,
+    path,
+  });
+  await insertSkeletonChapters(course.id, path);
+  await updateCourseStatus(course.id, "skeleton");
+  await updateGenerationTask(payload.taskId, {
+    progressTotalChapters: path.chapters.length,
+    courseId: course.id,
+  });
   return {
     taskId: payload.taskId,
     courseId: course.id,

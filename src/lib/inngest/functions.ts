@@ -1,8 +1,21 @@
 import { inngest } from "@/lib/inngest/client";
 import { getCourseById, updateGenerationTask } from "@/lib/db/repositories";
-import { generateChapterOnDemand } from "@/lib/engine/generate-chapter-on-demand";
 import {
-  runCourseGenerationPhase1,
+  runChapterAnalogistOnly,
+  runChapterCoderOnly,
+  runChapterExaminerOnly,
+  runChapterNarratorOnly,
+  runChapterSave,
+  runChapterVisualizerOnly,
+  runChapterConnectorOnly,
+  pollNarratorDraft,
+  type ChapterAgentsResult,
+} from "@/lib/engine/generate-chapter-on-demand";
+import { serverEnv } from "@/lib/env";
+import {
+  runCourseGenerationPhase1Extract,
+  runCourseGenerationPhase1Ingest,
+  runCourseGenerationPhase1PathShell,
   runCourseGenerationPhaseFinal,
   runCourseGenerationSkeleton,
 } from "@/lib/engine/run-course-generation";
@@ -36,27 +49,64 @@ export const generateCourseFunction = inngest.createFunction(
         return await step.run("skeleton", () => runCourseGenerationSkeleton(payload));
       }
 
-      const phase1 = await step.run("phase1-ingest-and-skeleton", () =>
-        runCourseGenerationPhase1(payload),
+      // 阶段 1 拆成 3 步，适配 Vercel 免费 10s 超时
+      const afterIngest = await step.run("phase1-ingest", () =>
+        runCourseGenerationPhase1Ingest(payload),
+      );
+      const afterExtract = await step.run("phase1-extract", () =>
+        runCourseGenerationPhase1Extract(payload, afterIngest.sourceId),
+      );
+      const phase1 = await step.run("phase1-path-shell", () =>
+        runCourseGenerationPhase1PathShell(payload, afterExtract.sourceId),
       );
 
       for (let i = 0; i < phase1.totalChapters; i++) {
-        await step.run(`chapter-${i}`, async () => {
-          const course = await getCourseById(phase1.courseId);
-          const existing = course?.chapters[i];
-          if (existing?.narration?.trim()) {
-            await updateGenerationTask(phase1.taskId, {
-              progressChaptersDone: Math.min(i + 1, phase1.totalChapters),
-            });
-            return { orderIndex: i, skipped: true };
-          }
-          const chapter = await generateChapterOnDemand(phase1.courseId, i);
-          if (!chapter) throw new Error(`Chapter ${i} generation failed`);
+        const course = await getCourseById(phase1.courseId);
+        const existing = course?.chapters[i];
+        if (existing?.narration?.trim()) {
           await updateGenerationTask(phase1.taskId, {
             progressChaptersDone: Math.min(i + 1, phase1.totalChapters),
           });
-          return { orderIndex: i };
-        });
+          continue;
+        }
+
+        const base = serverEnv.INNGEST_USE_WORKER
+          ? await (async () => {
+              await step.sendEvent(`emit-narrator-request-${i}`, {
+                name: "worker/narrator.requested",
+                data: {
+                  taskId: phase1.taskId,
+                  courseId: phase1.courseId,
+                  chapterIndex: i,
+                },
+              });
+              return await step.run(`chapter-${i}-narrator-from-worker`, () =>
+                pollNarratorDraft(phase1.courseId, i),
+              );
+            })()
+          : await step.run(`chapter-${i}-narrator`, () =>
+              runChapterNarratorOnly(phase1.courseId, i),
+            );
+        const [analogist, visualizer, examiner] = await Promise.all([
+          step.run(`chapter-${i}-analogist`, () => runChapterAnalogistOnly(phase1.courseId, i)),
+          step.run(`chapter-${i}-visualizer`, () => runChapterVisualizerOnly(phase1.courseId, i)),
+          step.run(`chapter-${i}-examiner`, () => runChapterExaminerOnly(phase1.courseId, i)),
+        ]);
+        await step.run(`chapter-${i}-connector`, () =>
+          runChapterConnectorOnly(phase1.courseId, i),
+        );
+        const coder = await step.run(`chapter-${i}-coder`, () =>
+          runChapterCoderOnly(phase1.courseId, i),
+        );
+        const agents: ChapterAgentsResult = {
+          analogies: analogist.analogies,
+          svgComponents: visualizer.svgComponents,
+          quizQuestions: examiner.quizQuestions,
+          codeSnippets: coder.codeSnippets,
+        };
+        await step.run(`chapter-${i}-save`, () =>
+          runChapterSave(phase1.courseId, i, phase1.taskId, phase1.totalChapters, base, agents),
+        );
       }
 
       return await step.run("phase-final-verify-and-publish", () =>

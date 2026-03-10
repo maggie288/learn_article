@@ -13,6 +13,7 @@ interface GenerateResponse {
     status: string;
     estimatedMinutes: number | null;
     cacheHit: boolean;
+    resumed?: boolean;
   };
   error?: {
     message: string;
@@ -27,6 +28,8 @@ interface StatusResponse {
     courseId: string | null;
     errorMessage: string | null;
     updatedAt: string;
+    progressTotalChapters?: number;
+    progressChaptersDone?: number;
   };
   error?: {
     message: string;
@@ -58,6 +61,7 @@ export function GenerateCourseForm() {
   const [status, setStatus] = useState("idle");
   const [taskId, setTaskId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const buttonLabel = useMemo(() => {
     if (status === "submitting") {
@@ -107,7 +111,39 @@ export function GenerateCourseForm() {
 
     setTaskId(result.data.taskId);
     setStatus("polling");
+    setProgress(null);
     await pollUntilReady(result.data.taskId);
+  }
+
+  async function handleResume() {
+    if (!taskId) return;
+    setError(null);
+    setStatus("submitting");
+
+    const response = await fetch("/api/courses/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resumeTaskId: taskId }),
+    });
+
+    const result = (await response.json()) as GenerateResponse;
+
+    if (!response.ok || !result.success || !result.data) {
+      setStatus("idle");
+      setError(result.error?.message ?? "Failed to resume.");
+      return;
+    }
+
+    if (result.data.status === "published" && result.data.courseId) {
+      router.push(`/course/${result.data.courseId}`);
+      return;
+    }
+
+    const nextId = result.data.taskId ?? taskId;
+    setTaskId(nextId);
+    setStatus("polling");
+    setProgress(null);
+    await pollUntilReady(nextId);
   }
 
   async function pollUntilReady(nextTaskId: string) {
@@ -129,8 +165,15 @@ export function GenerateCourseForm() {
 
       if (result.data.status === "failed") {
         setStatus("idle");
+        setProgress(null);
         setError(result.data.errorMessage ?? "Course generation failed.");
         return;
+      }
+
+      const total = result.data.progressTotalChapters ?? 0;
+      const done = result.data.progressChaptersDone ?? 0;
+      if (total > 0) {
+        setProgress({ done, total });
       }
 
       if (result.data.status === "published" && result.data.courseId) {
@@ -191,7 +234,7 @@ export function GenerateCourseForm() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <button
             className="rounded-full bg-sky-400 px-5 py-3 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
             disabled={status === "submitting" || status === "polling"}
@@ -199,12 +242,29 @@ export function GenerateCourseForm() {
           >
             {buttonLabel}
           </button>
+          {status === "polling" && progress && progress.total > 0 ? (
+            <span className="text-sm text-slate-400">
+              正在生成第 {progress.done}/{progress.total} 章
+            </span>
+          ) : null}
           {taskId ? <span className="text-sm text-slate-400">taskId: {taskId}</span> : null}
         </div>
 
         {error ? (
-          <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-            {error}
+          <div className="space-y-3 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            <p>{error}</p>
+            {taskId ? (
+              <button
+                className="rounded-full border border-rose-400/60 bg-rose-500/20 px-4 py-2 font-medium text-rose-100 hover:bg-rose-500/30"
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleResume();
+                }}
+                type="button"
+              >
+                继续生成
+              </button>
+            ) : null}
           </div>
         ) : null}
       </form>
