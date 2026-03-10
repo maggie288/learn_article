@@ -10,6 +10,9 @@ import { unifiedChat } from "@/lib/llm/unified-llm";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { err, ok } from "@/lib/types/api";
 
+/** 单次 LLM 深度解读，可能较慢 */
+export const maxDuration = 60;
+
 const bodySchema = z.object({
   concept: z.string().min(1).max(200),
 });

@@ -4,6 +4,9 @@ import { extractPaperInsights } from "@/lib/engine/extraction/extract-paper-insi
 import { ingestPaperFromUrl } from "@/lib/engine/ingestion/paper";
 import { err, ok } from "@/lib/types/api";
 
+/** 拉取 + 解析论文并做洞察提取，LLM 调用可能较久 */
+export const maxDuration = 60;
+
 const analyzeSchema = z.object({
   sourceUrl: z.string().url(),
 });

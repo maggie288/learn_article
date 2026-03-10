@@ -5,6 +5,9 @@ import { generateChapterOnDemand } from "@/lib/engine/generate-chapter-on-demand
 import { checkRateLimit } from "@/lib/rate-limit";
 import { err, ok } from "@/lib/types/api";
 
+/** 按需生成单章含 LLM + 可能 TTS，需要较长超时（Vercel Pro 建议 ≤300） */
+export const maxDuration = 120;
+
 interface RouteParams {
   params: Promise<{ id: string; index: string }>;
 }
